@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Search/grep magnifying glass icon -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30 C42.95,30 34,38.95 34,50 C34,61.05 42.95,70 54,70 C58.56,70 62.75,68.53 66.12,66.05 L74.54,74.46 C75.32,75.24 76.58,75.24 77.36,74.46 C78.15,73.68 78.15,72.41 77.36,71.63 L68.95,63.22 C71.43,59.85 72.9,55.66 72.9,50.9 C73,38.95 64.05,30 54,30 Z M54,34 C61.73,34 68,40.27 68,48 C68,55.73 61.73,62 54,62 C46.27,62 40,55.73 40,48 C40,40.27 46.27,34 54,34 Z" />
+</vector>
