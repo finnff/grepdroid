@@ -16,12 +16,13 @@ import kotlinx.coroutines.sync.withPermit
 class ImageRepository(
     private val dao: ImageDao,
     private val mediaStoreScanner: MediaStoreScanner,
-    private val ocrProcessor: OcrProcessor
+    private val ocrProcessor: OcrProcessor,
+    private val dispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO
 ) {
-    
+
     private val scanSemaphore = Semaphore(4)
     private var scanJob: Job? = null
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val scope = CoroutineScope(dispatcher)
     
     private val _scanProgress = MutableStateFlow(0f)
     val scanProgress: StateFlow<Float> = _scanProgress.asStateFlow()

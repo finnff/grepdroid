@@ -11,6 +11,9 @@ coil = "3.4.0"
 mlkitTextRecognition = "16.0.1"
 activityCompose = "1.12.4"
 coroutinesPlayServices = "1.9.0"
+mockitoKotlin = "5.2.1"
+junit = "4.13.2"
+coroutinesTest = "1.9.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -31,6 +34,10 @@ mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition"
 coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutinesPlayServices" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
+mockito-kotlin = { group = "org.mockito.kotlin", name = "mockito-kotlin", version.ref = "mockitoKotlin" }
+mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockitoKotlin" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutinesTest" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

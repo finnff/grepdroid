@@ -136,8 +136,7 @@ private fun ImageCard(
                 modifier = Modifier
                     .fillMaxSize()
                     .weight(1f),
-                contentScale = ContentScale.Crop,
-                placeholder = androidx.compose.ui.graphics.Color.Transparent
+                contentScale = ContentScale.Crop
             )
             Text(
                 text = displayName,
