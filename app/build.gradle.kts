@@ -68,6 +68,7 @@ dependencies {
     implementation(libs.compose.ui.graphics)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
+    implementation("androidx.compose.material:material-icons-extended:1.7.8")
     implementation(libs.compose.navigation)
 
     // Image loading

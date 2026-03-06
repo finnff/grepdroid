@@ -11,7 +11,7 @@ data class TrackedImage(
 @Dao
 interface ImageDao {
     
-    @Query("SELECT si.*, fts.rank FROM scanned_images si JOIN scanned_images_fts fts ON si.mediaStoreId = fts.mediaStoreId WHERE fts.extractedText MATCH :query* ORDER BY fts.rank LIMIT 50")
+    @Query("SELECT * FROM scanned_images WHERE mediaStoreId IN (SELECT mediaStoreId FROM scanned_images_fts WHERE extracted_text MATCH :query || '*') LIMIT 50")
     fun search(query: String): Flow<List<ScannedImage>>
     
     @Query("SELECT mediaStoreId, dateModified FROM scanned_images")

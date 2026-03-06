@@ -28,7 +28,7 @@ class MainActivity : ComponentActivity() {
     ) { permissions ->
         val allGranted = permissions.values.all { it }
         if (allGranted) {
-            viewModel<MainViewModel>().startScan()
+            (application as GrepdroidApp).repository.startScan()
         }
     }
     

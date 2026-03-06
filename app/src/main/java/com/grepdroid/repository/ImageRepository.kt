@@ -67,7 +67,7 @@ class ImageRepository(
                 for (image in toScan) {
                     scanSemaphore.withPermit {
                         val text = ocrProcessor.extractTextFromUri(image.contentUri)
-                        
+
                         dao.upsert(
                             com.grepdroid.data.db.ScannedImage(
                                 mediaStoreId = image.mediaStoreId,
