@@ -13,11 +13,8 @@ data class ScannedImage(
     val scannedAt: Long
 )
 
-// FTS4 virtual table for full-text search on extracted_text
-// FTS tables use rowid as implicit primary key, but Room requires explicit @PrimaryKey
+@Fts4(contentEntity = ScannedImage::class)
 @Entity(tableName = "scanned_images_fts")
 data class ScannedImageFts(
-    @PrimaryKey(autoGenerate = true) val rowId: Long = 0,
-    @ColumnInfo(name = "mediaStoreId") val mediaStoreId: Long,
-    @ColumnInfo(name = "extracted_text") val extracted_text: String
+    val extractedText: String
 )

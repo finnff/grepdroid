@@ -4,6 +4,7 @@ import android.app.Application
 import com.grepdroid.data.db.GrepdroidDatabase
 import com.grepdroid.data.MediaStoreScanner
 import com.grepdroid.data.OcrProcessor
+import com.grepdroid.data.UserPreferences
 import com.grepdroid.repository.ImageRepository
 
 class GrepdroidApp : Application() {
@@ -20,11 +21,16 @@ class GrepdroidApp : Application() {
         OcrProcessor(this)
     }
 
+    val userPreferences: UserPreferences by lazy {
+        UserPreferences(this)
+    }
+
     val repository: ImageRepository by lazy {
         ImageRepository(
             dao = database.imageDao(),
             mediaStoreScanner = mediaStoreScanner,
-            ocrProcessor = ocrProcessor
+            ocrProcessor = ocrProcessor,
+            userPreferences = userPreferences
         )
     }
 }

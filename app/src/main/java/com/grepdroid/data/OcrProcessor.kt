@@ -4,12 +4,11 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
-import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.InputStream
 
@@ -22,8 +21,8 @@ class OcrProcessor(private val context: Context) {
             val bitmap = loadAndScaleBitmap(contentUri)
             val inputImage = InputImage.fromBitmap(bitmap, 0)
             
-            val visionText = Tasks.await(textRecognizer.process(inputImage))
-            val text = visionText.text ?: ""
+            val visionText = textRecognizer.process(inputImage).await()
+            val text = visionText.text
 
             bitmap.recycle()
             

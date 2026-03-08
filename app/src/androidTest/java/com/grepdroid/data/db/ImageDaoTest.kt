@@ -134,7 +134,7 @@ class ImageDaoTest {
     }
 
     @Test
-    fun testDeleteRemoved() = runTest {
+    fun testDeleteByIds() = runTest {
         val image1 = ScannedImage(
             mediaStoreId = 1L,
             contentUri = "content://media/external/images/media/1",
@@ -156,7 +156,39 @@ class ImageDaoTest {
         dao.upsert(image1)
         dao.upsert(image2)
 
-        dao.deleteRemoved(listOf(1L))
+        // Delete image 2 by ID
+        dao.deleteByIds(listOf(2L))
+
+        val all = dao.getAllTracked().first()
+        assertEquals(1, all.size)
+        assertEquals(1L, all[0].mediaStoreId)
+    }
+
+    @Test
+    fun testDeleteNotIn() = runTest {
+        val image1 = ScannedImage(
+            mediaStoreId = 1L,
+            contentUri = "content://media/external/images/media/1",
+            displayName = "test1.jpg",
+            dateModified = 1000L,
+            extractedText = "Test",
+            scannedAt = System.currentTimeMillis()
+        )
+
+        val image2 = ScannedImage(
+            mediaStoreId = 2L,
+            contentUri = "content://media/external/images/media/2",
+            displayName = "test2.jpg",
+            dateModified = 2000L,
+            extractedText = "Test2",
+            scannedAt = System.currentTimeMillis()
+        )
+
+        dao.upsert(image1)
+        dao.upsert(image2)
+
+        // Keep only image 1
+        dao.deleteNotIn(listOf(1L))
 
         val all = dao.getAllTracked().first()
         assertEquals(1, all.size)

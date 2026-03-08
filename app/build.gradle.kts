@@ -68,15 +68,15 @@ dependencies {
     implementation(libs.compose.ui.graphics)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
-    implementation("androidx.compose.material:material-icons-extended:1.7.8")
+    implementation(libs.compose.material.icons.extended)
     implementation(libs.compose.navigation)
 
     // Image loading
     implementation(libs.coil.compose)
-    implementation(libs.coil.network)
 
     // ML Kit Text Recognition
     implementation(libs.mlkit.text.recognition)
+    implementation(libs.coroutines.play.services)
 
     // Activity Compose
     implementation(libs.androidx.activity.compose)
