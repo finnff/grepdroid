@@ -21,9 +21,9 @@ fun FolderPickerDialog(
     onToggleBucket: (Long) -> Unit,
     onSelectAll: () -> Unit,
     onConfirm: () -> Unit,
-    onDismiss: () -> Unit
+    @Suppress("UNUSED_PARAMETER") onDismiss: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onConfirm) {
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
             Text(
                 text = "Select folders to scan",
@@ -81,14 +81,7 @@ fun FolderPickerDialog(
                 }
             }
 
-            Button(
-                onClick = onConfirm,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 16.dp)
-            ) {
-                Text("Confirm")
-            }
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }

@@ -32,7 +32,7 @@ class UserPreferences(context: Context) {
         }
 
     var sortOrder: String
-        get() = prefs.getString(KEY_SORT_ORDER, "ALPHABETICAL") ?: "ALPHABETICAL"
+        get() = prefs.getString(KEY_SORT_ORDER, "BEST_MATCH") ?: "BEST_MATCH"
         set(value) {
             prefs.edit().putString(KEY_SORT_ORDER, value).apply()
         }

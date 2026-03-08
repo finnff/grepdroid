@@ -7,6 +7,7 @@ import com.grepdroid.data.MediaStoreScanner
 import com.grepdroid.data.UserPreferences
 import com.grepdroid.repository.ImageRepository
 import com.grepdroid.repository.ScanProgress
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -15,7 +16,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 enum class SortOrder {
-    ALPHABETICAL, NEWEST_FIRST, OLDEST_FIRST
+    BEST_MATCH, ALPHABETICAL, NEWEST_FIRST, OLDEST_FIRST
 }
 
 data class UiState(
@@ -31,22 +32,23 @@ data class UiState(
     val selectedBucketIds: Set<Long> = emptySet(),
     val showFolderPicker: Boolean = false,
     val gridColumns: Int = 3,
-    val sortOrder: SortOrder = SortOrder.ALPHABETICAL
+    val sortOrder: SortOrder = SortOrder.BEST_MATCH,
+    val totalImagesInSelection: Int = 0
 )
 
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 class MainViewModel(
     private val repository: ImageRepository,
-    private val userPreferences: UserPreferences? = null
+    private val userPreferences: UserPreferences? = null,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(UiState(
         isFuzzySearch = userPreferences?.useFuzzySearch ?: false,
-        selectedBucketIds = repository.getSelectedBucketIds(),
         gridColumns = userPreferences?.gridColumns ?: 3,
         sortOrder = userPreferences?.sortOrder?.let {
-            try { SortOrder.valueOf(it) } catch (_: Exception) { SortOrder.ALPHABETICAL }
-        } ?: SortOrder.ALPHABETICAL
+            try { SortOrder.valueOf(it) } catch (_: Exception) { SortOrder.BEST_MATCH }
+        } ?: SortOrder.BEST_MATCH
     ))
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
@@ -108,6 +110,7 @@ class MainViewModel(
         images: List<com.grepdroid.data.db.ScannedImage>,
         sort: SortOrder
     ): List<com.grepdroid.data.db.ScannedImage> = when (sort) {
+        SortOrder.BEST_MATCH -> images.sortedByDescending { it.dateModified }
         SortOrder.ALPHABETICAL -> images.sortedBy { it.displayName.lowercase() }
         SortOrder.NEWEST_FIRST -> images.sortedByDescending { it.dateModified }
         SortOrder.OLDEST_FIRST -> images.sortedBy { it.dateModified }
@@ -117,6 +120,7 @@ class MainViewModel(
         scored: List<FuzzyMatcher.ScoredResult>,
         sort: SortOrder
     ): List<FuzzyMatcher.ScoredResult> = when (sort) {
+        SortOrder.BEST_MATCH -> scored.sortedWith(compareByDescending<FuzzyMatcher.ScoredResult> { it.matchPercent }.thenByDescending { it.image.dateModified })
         SortOrder.ALPHABETICAL -> scored.sortedBy { it.image.displayName.lowercase() }
         SortOrder.NEWEST_FIRST -> scored.sortedByDescending { it.image.dateModified }
         SortOrder.OLDEST_FIRST -> scored.sortedBy { it.image.dateModified }
@@ -165,9 +169,10 @@ class MainViewModel(
 
     fun cycleSortOrder() {
         val next = when (_sortOrder.value) {
+            SortOrder.BEST_MATCH -> SortOrder.ALPHABETICAL
             SortOrder.ALPHABETICAL -> SortOrder.NEWEST_FIRST
             SortOrder.NEWEST_FIRST -> SortOrder.OLDEST_FIRST
-            SortOrder.OLDEST_FIRST -> SortOrder.ALPHABETICAL
+            SortOrder.OLDEST_FIRST -> SortOrder.BEST_MATCH
         }
         _sortOrder.value = next
         userPreferences?.sortOrder = next.name
@@ -176,15 +181,21 @@ class MainViewModel(
 
     fun loadBuckets() {
         viewModelScope.launch {
-            val buckets = withContext(Dispatchers.IO) { repository.getAvailableBuckets() }
-            // Initialize selectedBucketIds: if currently empty, select all buckets
-            val currentSelected = _uiState.value.selectedBucketIds
-            val initialSelected = if (currentSelected.isEmpty()) {
-                buckets.map { it.bucketId }.toSet()
-            } else {
-                currentSelected
-            }
-            _uiState.update { it.copy(availableBuckets = buckets, showFolderPicker = true, selectedBucketIds = initialSelected) }
+            val buckets = withContext(ioDispatcher) { repository.getAvailableBuckets() }
+            // Convert stored selection to UI selection:
+            // stored empty set means "all" (no filter), so show all checked
+            val storedIds = repository.getSelectedBucketIds()
+            val allBucketIds = buckets.map { it.bucketId }.toSet()
+            val uiSelected = if (storedIds.isEmpty()) allBucketIds else storedIds
+            val totalInSelection = buckets
+                .filter { it.bucketId in uiSelected }
+                .sumOf { it.imageCount }
+            _uiState.update { it.copy(
+                availableBuckets = buckets,
+                showFolderPicker = true,
+                selectedBucketIds = uiSelected,
+                totalImagesInSelection = totalInSelection
+            ) }
         }
     }
 
@@ -209,11 +220,24 @@ class MainViewModel(
 
     fun confirmBucketSelection() {
         val state = _uiState.value
+        val selected = state.selectedBucketIds
         val allBucketIds = state.availableBuckets.map { it.bucketId }.toSet()
+
+        if (selected.isEmpty()) {
+            // Nothing selected — store empty, don't scan
+            repository.setSelectedBuckets(emptySet())
+            _uiState.update { it.copy(showFolderPicker = false) }
+            repository.cancelScan()
+            return
+        }
+
         // If all are selected, store empty set (meaning "all" / no filter)
-        val toStore = if (state.selectedBucketIds == allBucketIds) emptySet() else state.selectedBucketIds
+        val toStore = if (selected == allBucketIds) emptySet() else selected
         repository.setSelectedBuckets(toStore)
-        _uiState.update { it.copy(showFolderPicker = false) }
+        val totalInSelection = state.availableBuckets
+            .filter { it.bucketId in selected }
+            .sumOf { it.imageCount }
+        _uiState.update { it.copy(showFolderPicker = false, totalImagesInSelection = totalInSelection) }
         repository.cancelScan()
         repository.startScan()
     }
@@ -221,11 +245,8 @@ class MainViewModel(
     fun dismissFolderPicker() {
         val stored = repository.getSelectedBucketIds()
         // Restore: if stored is empty, that means "all" — show all buckets selected
-        val restored = if (stored.isEmpty()) {
-            _uiState.value.availableBuckets.map { it.bucketId }.toSet()
-        } else {
-            stored
-        }
+        val allBucketIds = _uiState.value.availableBuckets.map { it.bucketId }.toSet()
+        val restored = if (stored.isEmpty()) allBucketIds else stored
         _uiState.update { it.copy(showFolderPicker = false, selectedBucketIds = restored) }
     }
 }

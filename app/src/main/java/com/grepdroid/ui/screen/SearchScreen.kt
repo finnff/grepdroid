@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -35,9 +36,14 @@ fun SearchScreen(
                 title = {
                     Column {
                         Text("Grepdroid", fontWeight = FontWeight.Bold)
-                        if (uiState.totalScannedCount > 0) {
+                        if (uiState.totalScannedCount > 0 || uiState.totalImagesInSelection > 0) {
+                            val subtitle = if (uiState.totalImagesInSelection > 0) {
+                                "${uiState.totalScannedCount} indexed · ${uiState.totalImagesInSelection} in folders"
+                            } else {
+                                "${uiState.totalScannedCount} images indexed"
+                            }
                             Text(
-                                "${uiState.totalScannedCount} images indexed",
+                                subtitle,
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -66,53 +72,36 @@ fun SearchScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            OutlinedTextField(
-                value = uiState.searchQuery,
-                onValueChange = { viewModel.onSearchQueryChange(it) },
+            // Search box + Fuzzy chip on same row
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("Search text in images...") },
-                leadingIcon = {
-                    Icon(Icons.Default.Search, null)
-                },
-                trailingIcon = {
-                    if (uiState.searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { viewModel.clearSearch() }) {
-                            Icon(Icons.Default.Clear, null)
-                        }
-                    }
-                },
-                singleLine = true
-            )
-
-            // Fuzzy toggle chip, grid columns, sort order
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                OutlinedTextField(
+                    value = uiState.searchQuery,
+                    onValueChange = { viewModel.onSearchQueryChange(it) },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Search text in images...") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Search, null)
+                    },
+                    trailingIcon = {
+                        if (uiState.searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { viewModel.clearSearch() }) {
+                                Icon(Icons.Default.Clear, null)
+                            }
+                        }
+                    },
+                    singleLine = true
+                )
                 FilterChip(
                     selected = uiState.isFuzzySearch,
                     onClick = { viewModel.toggleFuzzySearch() },
                     label = { Text("Fuzzy") }
                 )
-                Spacer(modifier = Modifier.weight(1f))
-                // Sort toggle
-                val sortLabel = when (uiState.sortOrder) {
-                    SortOrder.ALPHABETICAL -> "A-Z"
-                    SortOrder.NEWEST_FIRST -> "New"
-                    SortOrder.OLDEST_FIRST -> "Old"
-                }
-                FilledTonalIconButton(onClick = { viewModel.cycleSortOrder() }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.Sort, contentDescription = "Sort: $sortLabel", modifier = Modifier.size(20.dp))
-                }
-                Text(sortLabel, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                // Grid columns toggle
-                FilledTonalIconButton(onClick = { viewModel.cycleGridColumns() }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.GridView, contentDescription = "Grid: ${uiState.gridColumns} columns", modifier = Modifier.size(20.dp))
-                }
-                Text("${uiState.gridColumns}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             // Scan progress
@@ -143,14 +132,35 @@ fun SearchScreen(
                 }
             }
 
-            // Result count
+            // Result count + sort/grid controls
             if (uiState.searchQuery.isNotEmpty() && uiState.searchResults.isNotEmpty()) {
-                Text(
-                    text = "${uiState.searchResults.size} results",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                )
+                val sortLabel = when (uiState.sortOrder) {
+                    SortOrder.BEST_MATCH -> "Best"
+                    SortOrder.ALPHABETICAL -> "A-Z"
+                    SortOrder.NEWEST_FIRST -> "New"
+                    SortOrder.OLDEST_FIRST -> "Old"
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${uiState.searchResults.size} results",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    FilledTonalIconButton(onClick = { viewModel.cycleGridColumns() }, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.GridView, contentDescription = "Grid: ${uiState.gridColumns} columns", modifier = Modifier.size(16.dp))
+                    }
+                    Text("${uiState.gridColumns}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, end = 8.dp))
+                    FilledTonalIconButton(onClick = { viewModel.cycleSortOrder() }, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Sort, contentDescription = "Sort: $sortLabel", modifier = Modifier.size(16.dp))
+                    }
+                    Text(sortLabel, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp))
+                }
             }
 
             if (uiState.searchResults.isEmpty() && uiState.searchQuery.isNotEmpty()) {
@@ -224,9 +234,10 @@ private fun ImageCard(
                     contentScale = ContentScale.Crop
                 )
                 Text(
-                    text = displayName,
+                    text = displayName.removePrefix("Screenshot_").substringBeforeLast("."),
                     fontSize = 10.sp,
-                    maxLines = 2,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(4.dp)
                 )
             }

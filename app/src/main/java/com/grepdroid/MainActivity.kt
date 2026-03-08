@@ -1,5 +1,6 @@
 package com.grepdroid
 
+import androidx.activity.compose.BackHandler
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -94,13 +95,15 @@ class MainActivity : ComponentActivity() {
             }
             else -> {
                 if (selectedImageId != null) {
+                    val onBackToSearch = {
+                        currentRoute = getScreenRoute(Screen.Search)
+                        selectedImageId = null
+                        selectedImage = null
+                    }
+                    BackHandler(onBack = onBackToSearch)
                     ImageViewerScreen(
                         mediaStoreId = selectedImageId!!,
-                        onBack = {
-                            currentRoute = getScreenRoute(Screen.Search)
-                            selectedImageId = null
-                            selectedImage = null
-                        },
+                        onBack = onBackToSearch,
                         image = selectedImage
                     )
                 }
