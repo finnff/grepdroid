@@ -1,10 +1,12 @@
 package com.grepdroid.data
 
 import com.grepdroid.data.db.ScannedImage
+import com.grepdroid.data.db.ScannedVideo
 
 object FuzzyMatcher {
 
     data class ScoredResult(val image: ScannedImage, val matchPercent: Int)
+    data class ScoredVideoResult(val video: ScannedVideo, val matchPercent: Int)
 
     fun search(images: List<ScannedImage>, query: String, limit: Int = 50): List<ScoredResult> {
         if (query.isBlank()) return emptyList()
@@ -16,6 +18,21 @@ object FuzzyMatcher {
         return images.mapNotNull { image ->
             val score = score(image.extractedText, queryLower, queryWords)
             if (score > 0) ScoredResult(image, score) else null
+        }
+            .sortedByDescending { it.matchPercent }
+            .take(limit)
+    }
+
+    fun searchVideos(videos: List<ScannedVideo>, query: String, limit: Int = 50): List<ScoredVideoResult> {
+        if (query.isBlank()) return emptyList()
+
+        val queryLower = query.lowercase()
+        val queryWords = queryLower.split("\\s+".toRegex()).filter { it.isNotBlank() }
+        if (queryWords.isEmpty()) return emptyList()
+
+        return videos.mapNotNull { video ->
+            val score = score(video.extractedText, queryLower, queryWords)
+            if (score > 0) ScoredVideoResult(video, score) else null
         }
             .sortedByDescending { it.matchPercent }
             .take(limit)

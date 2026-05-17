@@ -20,6 +20,7 @@ import com.grepdroid.ui.navigation.Screen
 import com.grepdroid.ui.navigation.getScreenRoute
 import com.grepdroid.ui.screen.ImageViewerScreen
 import com.grepdroid.ui.screen.SearchScreen
+import com.grepdroid.ui.screen.VideoViewerScreen
 import com.grepdroid.ui.theme.GrepdroidTheme
 
 class MainActivity : ComponentActivity() {
@@ -27,8 +28,8 @@ class MainActivity : ComponentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val allGranted = permissions.values.all { it }
-        if (allGranted) {
+        val anyGranted = permissions.values.any { it }
+        if (anyGranted) {
             (application as GrepdroidApp).repository.startScan()
         }
     }
@@ -52,7 +53,10 @@ class MainActivity : ComponentActivity() {
 
     private fun requestPermissionsIfNeeded() {
         val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
+            arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO
+            )
         } else {
             arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
@@ -76,6 +80,9 @@ class MainActivity : ComponentActivity() {
         var currentRoute by remember { mutableStateOf(getScreenRoute(Screen.Search)) }
         var selectedImageId by remember { mutableStateOf<Long?>(null) }
         var selectedImage by remember { mutableStateOf<com.grepdroid.data.db.ScannedImage?>(null) }
+        var selectedVideoId by remember { mutableStateOf<Long?>(null) }
+        var selectedVideo by remember { mutableStateOf<com.grepdroid.data.db.ScannedVideo?>(null) }
+        var searchQueryAtTap by remember { mutableStateOf("") }
 
         LaunchedEffect(selectedImageId) {
             if (selectedImageId != null) {
@@ -83,30 +90,54 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        when (currentRoute) {
-            getScreenRoute(Screen.Search) -> {
+        LaunchedEffect(selectedVideoId) {
+            if (selectedVideoId != null) {
+                selectedVideo = app.repository.getScannedVideo(selectedVideoId!!)
+            }
+        }
+
+        when {
+            currentRoute == getScreenRoute(Screen.Search) -> {
                 SearchScreen(
-                    onNavigateToViewer = { id ->
+                    onNavigateToImage = { id ->
+                        searchQueryAtTap = viewModel.lastSearchQuery
                         selectedImageId = id
                         currentRoute = Screen.ImageViewer.createRoute(id)
+                    },
+                    onNavigateToVideo = { id ->
+                        searchQueryAtTap = viewModel.lastSearchQuery
+                        selectedVideoId = id
+                        currentRoute = Screen.VideoViewer.createRoute(id)
                     },
                     viewModel = viewModel
                 )
             }
-            else -> {
-                if (selectedImageId != null) {
-                    val onBackToSearch = {
-                        currentRoute = getScreenRoute(Screen.Search)
-                        selectedImageId = null
-                        selectedImage = null
-                    }
-                    BackHandler(onBack = onBackToSearch)
-                    ImageViewerScreen(
-                        mediaStoreId = selectedImageId!!,
-                        onBack = onBackToSearch,
-                        image = selectedImage
-                    )
+            selectedImageId != null -> {
+                val onBackToSearch = {
+                    currentRoute = getScreenRoute(Screen.Search)
+                    selectedImageId = null
+                    selectedImage = null
                 }
+                BackHandler(onBack = onBackToSearch)
+                ImageViewerScreen(
+                    mediaStoreId = selectedImageId!!,
+                    onBack = onBackToSearch,
+                    image = selectedImage
+                )
+            }
+            selectedVideoId != null -> {
+                val onBackToSearch = {
+                    currentRoute = getScreenRoute(Screen.Search)
+                    selectedVideoId = null
+                    selectedVideo = null
+                }
+                BackHandler(onBack = onBackToSearch)
+                VideoViewerScreen(
+                    mediaStoreId = selectedVideoId!!,
+                    searchQuery = searchQueryAtTap,
+                    onBack = onBackToSearch,
+                    video = selectedVideo
+                )
             }
         }
     }

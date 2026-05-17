@@ -5,6 +5,7 @@ import com.grepdroid.data.db.GrepdroidDatabase
 import com.grepdroid.data.MediaStoreScanner
 import com.grepdroid.data.OcrProcessor
 import com.grepdroid.data.UserPreferences
+import com.grepdroid.data.VideoProcessor
 import com.grepdroid.repository.ImageRepository
 
 class GrepdroidApp : Application() {
@@ -21,6 +22,10 @@ class GrepdroidApp : Application() {
         OcrProcessor(this)
     }
 
+    val videoProcessor: VideoProcessor by lazy {
+        VideoProcessor(this, ocrProcessor)
+    }
+
     val userPreferences: UserPreferences by lazy {
         UserPreferences(this)
     }
@@ -30,7 +35,9 @@ class GrepdroidApp : Application() {
             dao = database.imageDao(),
             mediaStoreScanner = mediaStoreScanner,
             ocrProcessor = ocrProcessor,
-            userPreferences = userPreferences
+            userPreferences = userPreferences,
+            videoDao = database.videoDao(),
+            videoProcessor = videoProcessor
         )
     }
 }

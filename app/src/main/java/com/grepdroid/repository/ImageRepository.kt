@@ -4,7 +4,10 @@ import com.grepdroid.data.FuzzyMatcher
 import com.grepdroid.data.MediaStoreScanner
 import com.grepdroid.data.OcrProcessor
 import com.grepdroid.data.UserPreferences
+import com.grepdroid.data.VideoProcessor
 import com.grepdroid.data.db.ImageDao
+import com.grepdroid.data.db.ScannedVideo
+import com.grepdroid.data.db.VideoDao
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,10 +31,13 @@ class ImageRepository(
     private val mediaStoreScanner: MediaStoreScanner,
     private val ocrProcessor: OcrProcessor,
     private val userPreferences: UserPreferences? = null,
-    private val dispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO
+    private val dispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
+    private val videoDao: VideoDao? = null,
+    private val videoProcessor: VideoProcessor? = null
 ) {
 
     private val scanSemaphore = Semaphore(4)
+    private val videoScanSemaphore = Semaphore(2)
     private var scanJob: Job? = null
     private val scope = CoroutineScope(dispatcher)
 
@@ -48,17 +54,44 @@ class ImageRepository(
             FuzzyMatcher.search(images, query)
         }.flowOn(Dispatchers.IO)
 
+    fun searchVideos(query: String): Flow<List<ScannedVideo>> =
+        videoDao?.search(query)?.flowOn(Dispatchers.IO) ?: flowOf(emptyList())
+
+    fun fuzzySearchVideos(query: String): Flow<List<FuzzyMatcher.ScoredVideoResult>> =
+        videoDao?.getAllWithText()?.map { videos ->
+            FuzzyMatcher.searchVideos(videos, query)
+        }?.flowOn(Dispatchers.IO) ?: flowOf(emptyList())
+
     fun getAllTracked() = dao.getAllTracked().flowOn(Dispatchers.IO)
 
     fun getTotalScannedCount(): Flow<Int> = dao.getTotalCount().flowOn(Dispatchers.IO)
 
+    fun getTotalScannedVideoCount(): Flow<Int> =
+        videoDao?.getTotalCount()?.flowOn(Dispatchers.IO) ?: flowOf(0)
+
     fun getAvailableBuckets(): List<MediaStoreScanner.ImageBucket> =
         mediaStoreScanner.getAvailableBuckets()
+
+    fun getAvailableVideoBuckets(): List<MediaStoreScanner.VideoBucket> =
+        mediaStoreScanner.getAvailableVideoBuckets()
 
     fun getSelectedBucketIds(): Set<Long> = userPreferences?.selectedBucketIds ?: emptySet()
 
     fun setSelectedBuckets(ids: Set<Long>) {
         userPreferences?.selectedBucketIds = ids
+    }
+
+    fun getSelectedVideoBucketIds(): Set<Long> =
+        userPreferences?.selectedVideoBucketIds ?: emptySet()
+
+    fun setSelectedVideoBuckets(ids: Set<Long>) {
+        userPreferences?.selectedVideoBucketIds = ids
+    }
+
+    fun getIndexVideos(): Boolean = userPreferences?.indexVideos ?: false
+
+    fun setIndexVideos(value: Boolean) {
+        userPreferences?.indexVideos = value
     }
 
     fun startScan() {
@@ -69,75 +102,148 @@ class ImageRepository(
 
         scanJob = scope.launch {
             try {
-                val bucketIds = userPreferences?.selectedBucketIds?.takeIf { it.isNotEmpty() }
-                val allImages = mediaStoreScanner.scanImages(bucketIds).first()
-                val trackedImages = dao.getAllTracked().first()
-                val trackedIds = trackedImages.associate { it.mediaStoreId to it.dateModified }
-
-                // Find images that are new or modified
-                val toScan = allImages.filter { image ->
-                    val existingDate = trackedIds[image.mediaStoreId]
-                    existingDate == null || existingDate != image.dateModified
+                scanImages()
+                if (userPreferences?.indexVideos == true && videoDao != null && videoProcessor != null) {
+                    scanVideos()
                 }
-
-                // Delete images no longer in gallery
-                val currentIds = allImages.map { it.mediaStoreId }.toSet()
-                val deletedIds = trackedImages
-                    .map { it.mediaStoreId }
-                    .filter { it !in currentIds }
-                if (deletedIds.isNotEmpty()) {
-                    dao.deleteByIds(deletedIds)
-                }
-
-                val totalImages = toScan.size
-                if (totalImages == 0) {
-                    _scanProgress.value = ScanProgress(0, 0)
-                    return@launch
-                }
-
-                val processed = AtomicInteger(0)
-                val scanStartTime = System.currentTimeMillis()
-
-                _scanProgress.value = ScanProgress(0, totalImages)
-
-                // Process images in parallel, throttled by semaphore
-                coroutineScope {
-                    for (image in toScan) {
-                        launch {
-                            scanSemaphore.withPermit {
-                                val text = ocrProcessor.extractTextFromUri(image.contentUri)
-
-                                dao.upsert(
-                                    com.grepdroid.data.db.ScannedImage(
-                                        mediaStoreId = image.mediaStoreId,
-                                        contentUri = image.contentUri,
-                                        displayName = image.displayName,
-                                        dateModified = image.dateModified,
-                                        extractedText = text,
-                                        scannedAt = System.currentTimeMillis()
-                                    )
-                                )
-
-                                val count = processed.incrementAndGet()
-                                val elapsedMs = System.currentTimeMillis() - scanStartTime
-                                val eta = if (count >= 3) {
-                                    val avgMs = elapsedMs.toDouble() / count
-                                    val remaining = totalImages - count
-                                    (avgMs * remaining / 1000).toLong()
-                                } else {
-                                    null
-                                }
-                                _scanProgress.value = ScanProgress(count, totalImages, eta)
-                            }
-                        }
-                    }
-                }
-
-                _scanProgress.value = ScanProgress(totalImages, totalImages, 0)
             } finally {
                 _isScanning.value = false
             }
         }
+    }
+
+    private suspend fun scanImages() {
+        val bucketIds = userPreferences?.selectedBucketIds?.takeIf { it.isNotEmpty() }
+        val allImages = mediaStoreScanner.scanImages(bucketIds).first()
+        val trackedImages = dao.getAllTracked().first()
+        val trackedIds = trackedImages.associate { it.mediaStoreId to it.dateModified }
+
+        val toScan = allImages.filter { image ->
+            val existingDate = trackedIds[image.mediaStoreId]
+            existingDate == null || existingDate != image.dateModified
+        }
+
+        val currentIds = allImages.map { it.mediaStoreId }.toSet()
+        val deletedIds = trackedImages
+            .map { it.mediaStoreId }
+            .filter { it !in currentIds }
+        if (deletedIds.isNotEmpty()) {
+            dao.deleteByIds(deletedIds)
+        }
+
+        val totalImages = toScan.size
+        if (totalImages == 0) {
+            _scanProgress.value = ScanProgress(0, 0)
+            return
+        }
+
+        val processed = AtomicInteger(0)
+        val scanStartTime = System.currentTimeMillis()
+
+        _scanProgress.value = ScanProgress(0, totalImages)
+
+        coroutineScope {
+            for (image in toScan) {
+                launch {
+                    scanSemaphore.withPermit {
+                        val text = ocrProcessor.extractTextFromUri(image.contentUri)
+
+                        dao.upsert(
+                            com.grepdroid.data.db.ScannedImage(
+                                mediaStoreId = image.mediaStoreId,
+                                contentUri = image.contentUri,
+                                displayName = image.displayName,
+                                dateModified = image.dateModified,
+                                extractedText = text,
+                                scannedAt = System.currentTimeMillis()
+                            )
+                        )
+
+                        val count = processed.incrementAndGet()
+                        val elapsedMs = System.currentTimeMillis() - scanStartTime
+                        val eta = if (count >= 3) {
+                            val avgMs = elapsedMs.toDouble() / count
+                            val remaining = totalImages - count
+                            (avgMs * remaining / 1000).toLong()
+                        } else {
+                            null
+                        }
+                        _scanProgress.value = ScanProgress(count, totalImages, eta)
+                    }
+                }
+            }
+        }
+
+        _scanProgress.value = ScanProgress(totalImages, totalImages, 0)
+    }
+
+    private suspend fun scanVideos() {
+        val processor = videoProcessor ?: return
+        val dao = videoDao ?: return
+
+        val bucketIds = userPreferences?.selectedVideoBucketIds?.takeIf { it.isNotEmpty() }
+        val allVideos = mediaStoreScanner.scanVideos(bucketIds).first()
+        val trackedVideos = dao.getAllTracked().first()
+        val trackedIds = trackedVideos.associate { it.mediaStoreId to it.dateModified }
+
+        val toScan = allVideos.filter { video ->
+            val existingDate = trackedIds[video.mediaStoreId]
+            existingDate == null || existingDate != video.dateModified
+        }
+
+        val currentIds = allVideos.map { it.mediaStoreId }.toSet()
+        val deletedIds = trackedVideos
+            .map { it.mediaStoreId }
+            .filter { it !in currentIds }
+        if (deletedIds.isNotEmpty()) {
+            dao.deleteByIds(deletedIds)
+        }
+
+        val totalVideos = toScan.size
+        if (totalVideos == 0) return
+
+        val processed = AtomicInteger(0)
+        val scanStartTime = System.currentTimeMillis()
+
+        _scanProgress.value = ScanProgress(0, totalVideos)
+
+        coroutineScope {
+            for (video in toScan) {
+                launch {
+                    videoScanSemaphore.withPermit {
+                        val result = processor.process(video.contentUri, video.mediaStoreId)
+                        if (result != null) {
+                            dao.upsert(
+                                ScannedVideo(
+                                    mediaStoreId = video.mediaStoreId,
+                                    contentUri = video.contentUri,
+                                    displayName = video.displayName,
+                                    durationMs = result.durationMs,
+                                    dateModified = video.dateModified,
+                                    extractedText = result.concatenatedText,
+                                    frameTimestampsJson = result.framesJson,
+                                    thumbnailPath = result.thumbnailPath,
+                                    scannedAt = System.currentTimeMillis()
+                                )
+                            )
+                        }
+
+                        val count = processed.incrementAndGet()
+                        val elapsedMs = System.currentTimeMillis() - scanStartTime
+                        val eta = if (count >= 2) {
+                            val avgMs = elapsedMs.toDouble() / count
+                            val remaining = totalVideos - count
+                            (avgMs * remaining / 1000).toLong()
+                        } else {
+                            null
+                        }
+                        _scanProgress.value = ScanProgress(count, totalVideos, eta)
+                    }
+                }
+            }
+        }
+
+        _scanProgress.value = ScanProgress(totalVideos, totalVideos, 0)
     }
 
     fun cancelScan() {
@@ -147,4 +253,6 @@ class ImageRepository(
     }
 
     suspend fun getScannedImage(mediaStoreId: Long) = dao.getById(mediaStoreId)
+
+    suspend fun getScannedVideo(mediaStoreId: Long) = videoDao?.getById(mediaStoreId)
 }

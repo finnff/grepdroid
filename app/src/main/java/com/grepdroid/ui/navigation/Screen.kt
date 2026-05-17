@@ -5,6 +5,9 @@ sealed class Screen(val route: String) {
     object ImageViewer : Screen("image_viewer/{mediaStoreId}") {
         fun createRoute(mediaStoreId: Long) = "image_viewer/$mediaStoreId"
     }
+    object VideoViewer : Screen("video_viewer/{mediaStoreId}") {
+        fun createRoute(mediaStoreId: Long) = "video_viewer/$mediaStoreId"
+    }
 
     companion object {
         fun getScreenRoute(screen: Screen) = screen.route

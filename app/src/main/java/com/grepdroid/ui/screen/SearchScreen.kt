@@ -2,6 +2,7 @@ package com.grepdroid.ui.screen
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -11,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -18,32 +20,39 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
-import com.grepdroid.data.FuzzyMatcher
 import com.grepdroid.ui.MainViewModel
+import com.grepdroid.ui.MediaFilter
+import com.grepdroid.ui.MediaResult
 import com.grepdroid.ui.SortOrder
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
-    onNavigateToViewer: (Long) -> Unit,
+    onNavigateToImage: (Long) -> Unit,
+    onNavigateToVideo: (Long) -> Unit,
     viewModel: MainViewModel
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
                     Column {
                         Text("Grepdroid", fontWeight = FontWeight.Bold)
-                        if (uiState.totalScannedCount > 0 || uiState.totalImagesInSelection > 0) {
-                            val subtitle = if (uiState.totalImagesInSelection > 0) {
-                                "${uiState.totalScannedCount} indexed · ${uiState.totalImagesInSelection} in folders"
-                            } else {
-                                "${uiState.totalScannedCount} images indexed"
-                            }
+                        val parts = buildList {
+                            if (uiState.totalScannedCount > 0) add("${uiState.totalScannedCount} images")
+                            if (uiState.totalScannedVideoCount > 0) add("${uiState.totalScannedVideoCount} videos")
+                            val inSel = uiState.totalImagesInSelection + uiState.totalVideosInSelection
+                            if (inSel > 0) add("$inSel in folders")
+                        }
+                        if (parts.isNotEmpty()) {
                             Text(
-                                subtitle,
+                                parts.joinToString(" · "),
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -51,6 +60,28 @@ fun SearchScreen(
                     }
                 },
                 actions = {
+                    val (filterIcon, filterLabel) = when (uiState.mediaFilter) {
+                        MediaFilter.BOTH -> Icons.Default.PhotoLibrary to "Both"
+                        MediaFilter.IMAGES -> Icons.Default.Image to "Images"
+                        MediaFilter.VIDEOS -> Icons.Default.Movie to "Videos"
+                    }
+                    IconButton(onClick = {
+                        viewModel.cycleMediaFilter()
+                        val next = when (uiState.mediaFilter) {
+                            MediaFilter.BOTH -> "Showing images only"
+                            MediaFilter.IMAGES -> "Showing videos only"
+                            MediaFilter.VIDEOS -> "Showing images and videos"
+                        }
+                        scope.launch {
+                            snackbarHostState.currentSnackbarData?.dismiss()
+                            snackbarHostState.showSnackbar(
+                                message = next,
+                                duration = SnackbarDuration.Short
+                            )
+                        }
+                    }) {
+                        Icon(filterIcon, "Filter: $filterLabel")
+                    }
                     IconButton(onClick = { viewModel.loadBuckets() }) {
                         Icon(Icons.Default.Folder, "Select folders")
                     }
@@ -72,7 +103,6 @@ fun SearchScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // Search box + Fuzzy chip on same row
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -84,7 +114,7 @@ fun SearchScreen(
                     value = uiState.searchQuery,
                     onValueChange = { viewModel.onSearchQueryChange(it) },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Search text in images...") },
+                    placeholder = { Text("Search text in images & videos...") },
                     leadingIcon = {
                         Icon(Icons.Default.Search, null)
                     },
@@ -104,7 +134,6 @@ fun SearchScreen(
                 )
             }
 
-            // Scan progress
             if (uiState.isScanning) {
                 val progress = uiState.scanProgress
                 LinearProgressIndicator(
@@ -132,7 +161,6 @@ fun SearchScreen(
                 }
             }
 
-            // Result count + sort/grid controls
             if (uiState.searchQuery.isNotEmpty() && uiState.searchResults.isNotEmpty()) {
                 val sortLabel = when (uiState.sortOrder) {
                     SortOrder.BEST_MATCH -> "Best"
@@ -171,11 +199,6 @@ fun SearchScreen(
                     Text("No results found")
                 }
             } else {
-                // Build score map for fuzzy results
-                val scoreMap = remember(uiState.searchResultsWithScore) {
-                    uiState.searchResultsWithScore.associate { it.image.mediaStoreId to it.matchPercent }
-                }
-
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(uiState.gridColumns),
                     modifier = Modifier.fillMaxSize(),
@@ -183,12 +206,15 @@ fun SearchScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(uiState.searchResults) { image ->
-                        ImageCard(
-                            contentUri = image.contentUri,
-                            displayName = image.displayName,
-                            matchPercent = scoreMap[image.mediaStoreId],
-                            onClick = { onNavigateToViewer(image.mediaStoreId) }
+                    items(uiState.searchResults, key = { "${it::class.simpleName}-${it.id}" }) { result ->
+                        MediaCard(
+                            result = result,
+                            onClick = {
+                                when (result) {
+                                    is MediaResult.Image -> onNavigateToImage(result.id)
+                                    is MediaResult.Video -> onNavigateToVideo(result.id)
+                                }
+                            }
                         )
                     }
                 }
@@ -196,13 +222,18 @@ fun SearchScreen(
         }
     }
 
-    // Folder picker dialog
     if (uiState.showFolderPicker) {
         FolderPickerDialog(
             buckets = uiState.availableBuckets,
             selectedBucketIds = uiState.selectedBucketIds,
+            videoBuckets = uiState.availableVideoBuckets,
+            selectedVideoBucketIds = uiState.selectedVideoBucketIds,
+            indexVideos = uiState.indexVideos,
             onToggleBucket = { viewModel.toggleBucket(it) },
             onSelectAll = { viewModel.selectAllBuckets() },
+            onToggleVideoBucket = { viewModel.toggleVideoBucket(it) },
+            onSelectAllVideos = { viewModel.selectAllVideoBuckets() },
+            onToggleIndexVideos = { viewModel.toggleIndexVideos() },
             onConfirm = { viewModel.confirmBucketSelection() },
             onDismiss = { viewModel.dismissFolderPicker() }
         )
@@ -210,10 +241,8 @@ fun SearchScreen(
 }
 
 @Composable
-private fun ImageCard(
-    contentUri: String,
-    displayName: String,
-    matchPercent: Int?,
+private fun MediaCard(
+    result: MediaResult,
     onClick: () -> Unit
 ) {
     Card(
@@ -225,24 +254,56 @@ private fun ImageCard(
     ) {
         Box {
             Column {
+                val thumbModel: Any = when (result) {
+                    is MediaResult.Image -> result.contentUri
+                    is MediaResult.Video -> if (result.thumbnailPath.isNotBlank()) File(result.thumbnailPath) else result.contentUri
+                }
                 AsyncImage(
-                    model = contentUri,
-                    contentDescription = displayName,
+                    model = thumbModel,
+                    contentDescription = result.displayName,
                     modifier = Modifier
                         .fillMaxSize()
                         .weight(1f),
                     contentScale = ContentScale.Crop
                 )
                 Text(
-                    text = displayName.removePrefix("Screenshot_").substringBeforeLast("."),
+                    text = result.displayName.removePrefix("Screenshot_").substringBeforeLast("."),
                     fontSize = 10.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(4.dp)
                 )
             }
-            // Match percentage badge
-            if (matchPercent != null) {
+
+            if (result is MediaResult.Video) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.6f),
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(4.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = formatDuration(result.durationMs),
+                            fontSize = 10.sp,
+                            color = Color.White,
+                            modifier = Modifier.padding(start = 2.dp)
+                        )
+                    }
+                }
+            }
+
+            if (result.matchPercent != null) {
                 Surface(
                     color = MaterialTheme.colorScheme.primaryContainer,
                     shape = MaterialTheme.shapes.small,
@@ -251,7 +312,7 @@ private fun ImageCard(
                         .padding(4.dp)
                 ) {
                     Text(
-                        text = "$matchPercent%",
+                        text = "${result.matchPercent}%",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -262,6 +323,13 @@ private fun ImageCard(
             }
         }
     }
+}
+
+private fun formatDuration(ms: Long): String {
+    val totalSec = ms / 1000
+    val m = totalSec / 60
+    val s = totalSec % 60
+    return "%d:%02d".format(m, s)
 }
 
 private fun formatEta(seconds: Long): String {

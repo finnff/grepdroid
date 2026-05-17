@@ -18,8 +18,14 @@ import com.grepdroid.data.MediaStoreScanner
 fun FolderPickerDialog(
     buckets: List<MediaStoreScanner.ImageBucket>,
     selectedBucketIds: Set<Long>,
+    videoBuckets: List<MediaStoreScanner.VideoBucket>,
+    selectedVideoBucketIds: Set<Long>,
+    indexVideos: Boolean,
     onToggleBucket: (Long) -> Unit,
     onSelectAll: () -> Unit,
+    onToggleVideoBucket: (Long) -> Unit,
+    onSelectAllVideos: () -> Unit,
+    onToggleIndexVideos: () -> Unit,
     onConfirm: () -> Unit,
     @Suppress("UNUSED_PARAMETER") onDismiss: () -> Unit
 ) {
@@ -35,9 +41,18 @@ fun FolderPickerDialog(
             LazyColumn(
                 modifier = Modifier
                     .weight(1f, fill = false)
-                    .heightIn(max = 400.dp)
+                    .heightIn(max = 500.dp)
             ) {
-                // "All folders" option
+                item {
+                    Text(
+                        "Images",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+
                 item {
                     Row(
                         modifier = Modifier
@@ -51,7 +66,7 @@ fun FolderPickerDialog(
                             onCheckedChange = { onSelectAll() }
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("All folders", fontWeight = FontWeight.Medium)
+                        Text("All image folders", fontWeight = FontWeight.Medium)
                     }
                     HorizontalDivider()
                 }
@@ -76,6 +91,76 @@ fun FolderPickerDialog(
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+                    }
+                }
+
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onToggleIndexVideos() }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Switch(
+                            checked = indexVideos,
+                            onCheckedChange = { onToggleIndexVideos() }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Index videos", fontWeight = FontWeight.Medium)
+                            Text(
+                                "Samples 1 frame/sec — slower than images",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                if (indexVideos) {
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelectAllVideos() }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = selectedVideoBucketIds.isNotEmpty() && selectedVideoBucketIds.size == videoBuckets.size,
+                                onCheckedChange = { onSelectAllVideos() }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("All video folders", fontWeight = FontWeight.Medium)
+                        }
+                        HorizontalDivider()
+                    }
+
+                    items(videoBuckets) { bucket ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onToggleVideoBucket(bucket.bucketId) }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = bucket.bucketId in selectedVideoBucketIds,
+                                onCheckedChange = { onToggleVideoBucket(bucket.bucketId) }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(bucket.bucketName, fontWeight = FontWeight.Medium)
+                                Text(
+                                    "${bucket.videoCount} videos",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }

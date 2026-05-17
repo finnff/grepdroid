@@ -5,3 +5,4 @@ app/schemas/
 local.properties
 *.iml
 .idea/
+CLAUDE.md
