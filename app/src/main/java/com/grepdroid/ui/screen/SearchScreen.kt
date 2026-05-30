@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
@@ -31,7 +32,8 @@ import java.io.File
 fun SearchScreen(
     onNavigateToImage: (Long) -> Unit,
     onNavigateToVideo: (Long) -> Unit,
-    viewModel: MainViewModel
+    viewModel: MainViewModel,
+    gridState: LazyGridState
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -200,6 +202,7 @@ fun SearchScreen(
                 }
             } else {
                 LazyVerticalGrid(
+                    state = gridState,
                     columns = GridCells.Fixed(uiState.gridColumns),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(8.dp),

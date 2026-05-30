@@ -69,6 +69,9 @@ class MainViewModel(
     private val _sortOrder = MutableStateFlow(_uiState.value.sortOrder)
     private val _mediaFilter = MutableStateFlow(_uiState.value.mediaFilter)
 
+    private val _scrollToTopRequest = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val scrollToTopRequest = _scrollToTopRequest.asSharedFlow()
+
     val lastSearchQuery: String get() = _searchQuery.value
 
     init {
@@ -166,6 +169,7 @@ class MainViewModel(
     fun onSearchQueryChange(query: String) {
         _searchQuery.value = query
         _uiState.update { it.copy(searchQuery = query) }
+        _scrollToTopRequest.tryEmit(Unit)
     }
 
     fun startScan() {
@@ -179,6 +183,7 @@ class MainViewModel(
     fun clearSearch() {
         _searchQuery.value = ""
         _uiState.update { it.copy(searchQuery = "", searchResults = emptyList()) }
+        _scrollToTopRequest.tryEmit(Unit)
     }
 
     fun toggleFuzzySearch() {
@@ -208,6 +213,7 @@ class MainViewModel(
         _mediaFilter.value = next
         userPreferences?.mediaFilter = next.name
         _uiState.update { it.copy(mediaFilter = next) }
+        _scrollToTopRequest.tryEmit(Unit)
     }
 
     fun cycleSortOrder() {
@@ -220,6 +226,7 @@ class MainViewModel(
         _sortOrder.value = next
         userPreferences?.sortOrder = next.name
         _uiState.update { it.copy(sortOrder = next) }
+        _scrollToTopRequest.tryEmit(Unit)
     }
 
     fun loadBuckets() {

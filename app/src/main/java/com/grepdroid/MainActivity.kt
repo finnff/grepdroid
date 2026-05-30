@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
@@ -76,6 +77,7 @@ class MainActivity : ComponentActivity() {
     fun GrepdroidAppContent() {
         val app = remember { application as GrepdroidApp }
         val viewModel: MainViewModel = viewModel(factory = MainViewModelFactory(app.repository, app.userPreferences))
+        val gridState = rememberLazyGridState()
 
         var currentRoute by remember { mutableStateOf(getScreenRoute(Screen.Search)) }
         var selectedImageId by remember { mutableStateOf<Long?>(null) }
@@ -96,6 +98,16 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Scroll to top only when the user explicitly changes search/filter/sort (via VM events).
+        // Never on back navigation from detail screens, so the hoisted gridState preserves position.
+        LaunchedEffect(Unit) {
+            viewModel.scrollToTopRequest.collect {
+                if (currentRoute == getScreenRoute(Screen.Search)) {
+                    gridState.scrollToItem(0)
+                }
+            }
+        }
+
         when {
             currentRoute == getScreenRoute(Screen.Search) -> {
                 SearchScreen(
@@ -109,7 +121,8 @@ class MainActivity : ComponentActivity() {
                         selectedVideoId = id
                         currentRoute = Screen.VideoViewer.createRoute(id)
                     },
-                    viewModel = viewModel
+                    viewModel = viewModel,
+                    gridState = gridState
                 )
             }
             selectedImageId != null -> {
