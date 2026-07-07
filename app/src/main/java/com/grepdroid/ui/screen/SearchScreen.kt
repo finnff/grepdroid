@@ -1,8 +1,12 @@
 package com.grepdroid.ui.screen
 
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
-import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -14,17 +18,27 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.grepdroid.data.VideoProcessor
 import com.grepdroid.ui.MainViewModel
 import com.grepdroid.ui.MediaFilter
 import com.grepdroid.ui.MediaResult
 import com.grepdroid.ui.SortOrder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -38,6 +52,7 @@ fun SearchScreen(
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    var showRegenDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -92,8 +107,30 @@ fun SearchScreen(
                             Icon(Icons.Default.Cancel, "Cancel scan")
                         }
                     } else {
-                        IconButton(onClick = { viewModel.startScan() }) {
-                            Icon(Icons.Default.Refresh, "Scan gallery")
+                        // Tap = scan; hold (>= REGEN_HOLD_MS) = repair missing thumbnails.
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onPress = {
+                                            // tryAwaitRelease() returns false when the
+                                            // press is cancelled (e.g. dragged off) — treat
+                                            // that as neither scan nor repair.
+                                            val outcome = withTimeoutOrNull(REGEN_HOLD_MS) {
+                                                tryAwaitRelease()
+                                            }
+                                            when (outcome) {
+                                                null -> showRegenDialog = true
+                                                true -> viewModel.startScan()
+                                                false -> Unit
+                                            }
+                                        }
+                                    )
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Refresh, "Scan gallery (hold to repair thumbnails)")
                         }
                     }
                 }
@@ -241,6 +278,28 @@ fun SearchScreen(
             onDismiss = { viewModel.dismissFolderPicker() }
         )
     }
+    if (showRegenDialog) {
+        AlertDialog(
+            onDismissRequest = { showRegenDialog = false },
+            title = { Text("Repair thumbnails") },
+            text = {
+                Text(
+                    "Decode a fresh thumbnail for every video whose thumbnail " +
+                        "file is missing? Runs in the background and shows " +
+                        "progress in the scan bar. It does not re-run OCR."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showRegenDialog = false
+                    viewModel.regenerateMissingVideoThumbnails()
+                }) { Text("Repair") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRegenDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -257,18 +316,20 @@ private fun MediaCard(
     ) {
         Box {
             Column {
-                val thumbModel: Any = when (result) {
-                    is MediaResult.Image -> result.contentUri
-                    is MediaResult.Video -> if (result.thumbnailPath.isNotBlank()) File(result.thumbnailPath) else result.contentUri
+                if (result is MediaResult.Video) {
+                    Box(modifier = Modifier.fillMaxSize().weight(1f)) {
+                        VideoThumbnail(video = result, onClick = onClick)
+                    }
+                } else {
+                    AsyncImage(
+                        model = result.contentUri,
+                        contentDescription = result.displayName,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .weight(1f),
+                        contentScale = ContentScale.Crop
+                    )
                 }
-                AsyncImage(
-                    model = thumbModel,
-                    contentDescription = result.displayName,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .weight(1f),
-                    contentScale = ContentScale.Crop
-                )
                 Text(
                     text = result.displayName.removePrefix("Screenshot_").substringBeforeLast("."),
                     fontSize = 10.sp,
@@ -324,6 +385,117 @@ private fun MediaCard(
                     )
                 }
             }
+        }
+    }
+}
+
+/** Progress points (fraction of duration) sampled for the press-and-hold preview. */
+private val VIDEO_PREVIEW_POINTS = listOf(0f, 0.25f, 0.5f, 0.75f)
+private const val VIDEO_PREVIEW_FRAME_INTERVAL_MS = 250L // 4 fps
+private const val VIDEO_PREVIEW_HOLD_THRESHOLD_MS = 300L
+private const val REGEN_HOLD_MS = 3000L
+
+/**
+ * Static video thumbnail that, on press-and-hold, decodes a few frames spread
+ * across the clip (see [VIDEO_PREVIEW_POINTS]) and cycles them at 4 fps. A quick
+ * tap navigates to the viewer; only a sustained hold triggers the preview.
+ */
+@Composable
+private fun VideoThumbnail(
+    video: MediaResult.Video,
+    onClick: () -> Unit
+) {
+    val context = LocalContext.current
+
+    var previewFrames by remember(video.id) { mutableStateOf<List<Bitmap>>(emptyList()) }
+    var frameIndex by remember(video.id) { mutableStateOf(0) }
+    var previewActive by remember(video.id) { mutableStateOf(false) }
+
+    LaunchedEffect(previewActive, video.id) {
+        if (!previewActive) return@LaunchedEffect
+        try {
+            val frames = withContext(Dispatchers.IO) {
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(context, Uri.parse(video.contentUri))
+                    val duration = video.durationMs.takeIf { it > 0 } ?: 0L
+                    if (duration > 0L) {
+                        VIDEO_PREVIEW_POINTS.mapNotNull { progress ->
+                            val timeUs = (duration * progress).toLong() * 1000L
+                            VideoProcessor.decodePreviewFrame(retriever, timeUs)
+                        }
+                    } else {
+                        emptyList<Bitmap>()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    emptyList<Bitmap>()
+                } finally {
+                    try { retriever.release() } catch (_: Exception) {}
+                }
+            }
+            if (frames.isEmpty() || !isActive) return@LaunchedEffect
+            previewFrames = frames
+            frameIndex = 0
+            while (isActive) {
+                delay(VIDEO_PREVIEW_FRAME_INTERVAL_MS)
+                frameIndex = (frameIndex + 1) % frames.size
+            }
+        } finally {
+            previewFrames = emptyList()
+            frameIndex = 0
+        }
+    }
+
+    val currentFrame = previewFrames.getOrNull(frameIndex)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(video.id) {
+                detectTapGestures(
+                    onPress = {
+                        // tryAwaitRelease() returns true on a real lift, false when the
+                        // press is cancelled (the grid took over to scroll), and times out
+                        // (null) on a sustained hold. Only a genuine lift opens the viewer
+                        // — a scroll-drag must never open it.
+                        val outcome = withTimeoutOrNull(VIDEO_PREVIEW_HOLD_THRESHOLD_MS) {
+                            tryAwaitRelease()
+                        }
+                        when (outcome) {
+                            null -> {
+                                previewActive = true
+                                tryAwaitRelease()
+                                previewActive = false
+                            }
+                            true -> onClick()
+                            false -> Unit
+                        }
+                    }
+                )
+            }
+    ) {
+        if (currentFrame != null) {
+            Image(
+                bitmap = currentFrame.asImageBitmap(),
+                contentDescription = video.displayName,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            val staticModel: Any = remember(video.id, video.thumbnailPath) {
+                // The OS may evict cacheDir, leaving the stored thumbnail path
+                // dangling. Fall back to the contentUri so Coil renders the
+                // first frame instead of a blank card (no rescan required).
+                val thumbFile = video.thumbnailPath.takeIf { it.isNotBlank() }?.let(::File)
+                if (thumbFile != null && thumbFile.exists()) thumbFile else video.contentUri
+            }
+            AsyncImage(
+                model = staticModel,
+                contentDescription = video.displayName,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
         }
     }
 }

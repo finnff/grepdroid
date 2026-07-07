@@ -2,14 +2,20 @@ package com.grepdroid.repository
 
 import com.grepdroid.data.MediaStoreScanner
 import com.grepdroid.data.OcrProcessor
+import com.grepdroid.data.ProcessedVideo
+import com.grepdroid.data.UserPreferences
+import com.grepdroid.data.VideoProcessor
 import com.grepdroid.data.db.ImageDao
 import com.grepdroid.data.db.ScannedImage
 import com.grepdroid.data.db.TrackedImage
+import com.grepdroid.data.db.TrackedVideo
+import com.grepdroid.data.db.VideoDao
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.kotlin.any
@@ -25,6 +31,8 @@ class ImageRepositoryTest {
     private val mockDao: ImageDao = mock()
     private val mockMediaStoreScanner: MediaStoreScanner = mock()
     private val mockOcrProcessor: OcrProcessor = mock()
+    private val mockVideoDao: VideoDao = mock()
+    private val mockVideoProcessor: VideoProcessor = mock()
 
     @Test
     fun `detects new images - should scan when no tracked images exist`() {
@@ -135,15 +143,84 @@ class ImageRepositoryTest {
     }
 
     @Test
-    fun `search returns flow of results`() {
-        val query = "test"
+    fun `search sanitizes query and delegates to dao`() {
         val results = flowOf(listOf(ScannedImage(1L, "", "", 0, "", 0)))
-
-        whenever(mockDao.search(query)).thenReturn(results)
+        whenever(mockDao.search("test*")).thenReturn(results)
 
         val repository = ImageRepository(mockDao, mockMediaStoreScanner, mockOcrProcessor)
-        val result = repository.search(query)
+        repository.search("test")
 
-        assertTrue(result != null)
+        verify(mockDao).search("test*")
+    }
+
+    @Test
+    fun `search with FTS-hostile query still delegates sanitized value to dao`() {
+        val results = flowOf(listOf(ScannedImage(1L, "", "", 0, "", 0)))
+        whenever(mockDao.search("ab c*")).thenReturn(results)
+
+        val repository = ImageRepository(mockDao, mockMediaStoreScanner, mockOcrProcessor)
+        val flow = repository.search("a*b (c")
+
+        assertNotNull(flow)
+        verify(mockDao).search("ab c*")
+    }
+
+    @Test
+    fun `search with blank query returns empty flow without touching dao`() {
+        val repository = ImageRepository(mockDao, mockMediaStoreScanner, mockOcrProcessor)
+        val flow = repository.search("")
+
+        assertNotNull(flow)
+        verify(mockDao, never()).search(any())
+    }
+
+    @Test
+    fun `searchVideos with blank query returns empty flow without touching videoDao`() {
+        val repository = ImageRepository(
+            mockDao, mockMediaStoreScanner, mockOcrProcessor, videoDao = mockVideoDao
+        )
+        val flow = repository.searchVideos("")
+
+        assertNotNull(flow)
+        verify(mockVideoDao, never()).search(any())
+    }
+
+    @Test
+    fun `removes video row and thumbnail when tracked video disappears from gallery`() {
+        val testDispatcher = StandardTestDispatcher()
+        runTest(testDispatcher) {
+            val currentVideos = listOf(
+                MediaStoreScanner.VideoItem(2L, "kept.mp4", 2000L, "content://2", 1000L)
+            )
+            val trackedVideos = listOf(
+                TrackedVideo(1L, 1000L),
+                TrackedVideo(2L, 2000L)
+            )
+            val mockPrefs = mock<UserPreferences>()
+            whenever(mockPrefs.indexVideos).thenReturn(true)
+
+            whenever(mockMediaStoreScanner.scanImages()).thenReturn(flowOf(emptyList()))
+            whenever(mockDao.getAllTracked()).thenReturn(flowOf(emptyList()))
+            whenever(mockMediaStoreScanner.scanVideos()).thenReturn(flowOf(currentVideos))
+            whenever(mockVideoDao.getAllTracked()).thenReturn(flowOf(trackedVideos))
+            whenever(mockVideoProcessor.process(any(), any())).thenReturn(
+                ProcessedVideo(durationMs = 1000L, frames = emptyList(), thumbnailPath = "x")
+            )
+
+            val repo = ImageRepository(
+                mockDao,
+                mockMediaStoreScanner,
+                mockOcrProcessor,
+                mockPrefs,
+                dispatcher = testDispatcher,
+                videoDao = mockVideoDao,
+                videoProcessor = mockVideoProcessor
+            )
+            repo.startScan()
+            advanceUntilIdle()
+
+            verify(mockVideoDao).deleteByIds(listOf(1L))
+            verify(mockVideoProcessor).deleteThumbnail(1L)
+        }
     }
 }

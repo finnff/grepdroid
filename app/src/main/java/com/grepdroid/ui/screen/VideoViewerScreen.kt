@@ -79,10 +79,11 @@ fun VideoViewerScreen(
                     .padding(padding)
                     .verticalScroll(rememberScrollState())
             ) {
-                val thumbModel: Any = if (video.thumbnailPath.isNotBlank()) {
-                    File(video.thumbnailPath)
-                } else {
-                    video.contentUri
+                // Fall back to the contentUri when the thumbnail file is gone
+                // (same eviction-resilience as the grid card).
+                val thumbModel: Any = remember(video.mediaStoreId, video.thumbnailPath) {
+                    val thumbFile = video.thumbnailPath.takeIf { it.isNotBlank() }?.let(::File)
+                    if (thumbFile != null && thumbFile.exists()) thumbFile else video.contentUri
                 }
                 AsyncImage(
                     model = thumbModel,

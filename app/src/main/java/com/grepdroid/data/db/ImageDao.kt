@@ -2,6 +2,7 @@ package com.grepdroid.data.db
 
 import androidx.room.*
 import kotlinx.coroutines.flow.Flow
+import androidx.sqlite.db.SupportSQLiteQuery
 
 data class TrackedImage(
     val mediaStoreId: Long,
@@ -29,8 +30,8 @@ interface ImageDao {
     @Query("SELECT * FROM scanned_images WHERE mediaStoreId = :mediaStoreId")
     suspend fun getById(mediaStoreId: Long): ScannedImage?
 
-    @Query("SELECT * FROM scanned_images WHERE extractedText != '' ORDER BY scannedAt DESC LIMIT 1000")
-    fun getAllWithText(): Flow<List<ScannedImage>>
+    @RawQuery
+    suspend fun searchFuzzyCandidates(query: SupportSQLiteQuery): List<ScannedImage>
 
     @Query("SELECT COUNT(*) FROM scanned_images")
     fun getTotalCount(): Flow<Int>

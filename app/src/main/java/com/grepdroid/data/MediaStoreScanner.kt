@@ -3,11 +3,27 @@ package com.grepdroid.data
 import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
 class MediaStoreScanner(private val context: Context) {
+
+    /**
+     * Selection fragment excluding media the user can't normally see: pending
+     * (still being written) on API 29+ and trashed on API 30+. Empty on older
+     * devices so the surrounding query stays valid.
+     */
+    private fun visibilitySelection(): String = buildString {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            append("${MediaStore.MediaColumns.IS_PENDING} = 0")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (isNotEmpty()) append(" AND ")
+            append("${MediaStore.MediaColumns.IS_TRASHED} = 0")
+        }
+    }
 
     data class ImageBucket(val bucketId: Long, val bucketName: String, val imageCount: Int)
 
@@ -22,7 +38,11 @@ class MediaStoreScanner(private val context: Context) {
         context.contentResolver.query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             projection,
-            "${MediaStore.Images.Media.BUCKET_ID} IS NOT NULL",
+            buildString {
+                append("${MediaStore.Images.Media.BUCKET_ID} IS NOT NULL")
+                val vis = visibilitySelection()
+                if (vis.isNotEmpty()) append(" AND $vis")
+            },
             null,
             null
         )?.use { cursor ->
@@ -54,13 +74,19 @@ class MediaStoreScanner(private val context: Context) {
             MediaStore.Images.Media.DATE_MODIFIED
         )
 
+        val vis = visibilitySelection()
         val selection = if (bucketIds != null && bucketIds.isNotEmpty()) {
             val placeholders = bucketIds.joinToString(",") { "?" }
-            "${MediaStore.Images.Media.BUCKET_ID} IN ($placeholders)"
+            buildString {
+                append("${MediaStore.Images.Media.BUCKET_ID} IN ($placeholders)")
+                if (vis.isNotEmpty()) append(" AND $vis")
+            }
         } else {
-            "${MediaStore.Images.Media.BUCKET_ID} IS NOT NULL"
+            buildString {
+                append("${MediaStore.Images.Media.BUCKET_ID} IS NOT NULL")
+                if (vis.isNotEmpty()) append(" AND $vis")
+            }
         }
-
         val selectionArgs = if (bucketIds != null && bucketIds.isNotEmpty()) {
             bucketIds.map { it.toString() }.toTypedArray()
         } else {
@@ -130,7 +156,11 @@ class MediaStoreScanner(private val context: Context) {
         context.contentResolver.query(
             MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
             projection,
-            "${MediaStore.Video.Media.BUCKET_ID} IS NOT NULL",
+            buildString {
+                append("${MediaStore.Video.Media.BUCKET_ID} IS NOT NULL")
+                val vis = visibilitySelection()
+                if (vis.isNotEmpty()) append(" AND $vis")
+            },
             null,
             null
         )?.use { cursor ->
@@ -163,11 +193,18 @@ class MediaStoreScanner(private val context: Context) {
             MediaStore.Video.Media.DURATION
         )
 
+        val vis = visibilitySelection()
         val selection = if (bucketIds != null && bucketIds.isNotEmpty()) {
             val placeholders = bucketIds.joinToString(",") { "?" }
-            "${MediaStore.Video.Media.BUCKET_ID} IN ($placeholders)"
+            buildString {
+                append("${MediaStore.Video.Media.BUCKET_ID} IN ($placeholders)")
+                if (vis.isNotEmpty()) append(" AND $vis")
+            }
         } else {
-            "${MediaStore.Video.Media.BUCKET_ID} IS NOT NULL"
+            buildString {
+                append("${MediaStore.Video.Media.BUCKET_ID} IS NOT NULL")
+                if (vis.isNotEmpty()) append(" AND $vis")
+            }
         }
 
         val selectionArgs = if (bucketIds != null && bucketIds.isNotEmpty()) {

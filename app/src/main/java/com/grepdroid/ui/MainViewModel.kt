@@ -176,6 +176,10 @@ class MainViewModel(
         repository.startScan()
     }
 
+    fun regenerateMissingVideoThumbnails() {
+        repository.regenerateMissingVideoThumbnails()
+    }
+
     fun cancelScan() {
         repository.cancelScan()
     }

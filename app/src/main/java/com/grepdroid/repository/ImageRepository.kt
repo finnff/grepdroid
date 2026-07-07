@@ -1,5 +1,6 @@
 package com.grepdroid.repository
 
+import com.grepdroid.data.FtsQuery
 import com.grepdroid.data.FuzzyMatcher
 import com.grepdroid.data.MediaStoreScanner
 import com.grepdroid.data.OcrProcessor
@@ -11,12 +12,14 @@ import com.grepdroid.data.db.VideoDao
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.atomic.AtomicInteger
+import androidx.sqlite.db.SimpleSQLiteQuery
 
 data class ScanProgress(
     val processed: Int = 0,
@@ -39,6 +42,7 @@ class ImageRepository(
     private val scanSemaphore = Semaphore(4)
     private val videoScanSemaphore = Semaphore(2)
     private var scanJob: Job? = null
+    private var regenJob: Job? = null
     private val scope = CoroutineScope(dispatcher)
 
     private val _scanProgress = MutableStateFlow(ScanProgress())
@@ -47,20 +51,49 @@ class ImageRepository(
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
 
-    fun search(query: String) = dao.search(query).flowOn(Dispatchers.IO)
+    fun search(query: String) =
+        FtsQuery.sanitize(query)?.let { match ->
+            dao.search(match)
+                .catch { emit(emptyList()) }
+                .flowOn(Dispatchers.IO)
+        } ?: flowOf(emptyList())
 
-    fun fuzzySearch(query: String): Flow<List<FuzzyMatcher.ScoredResult>> =
-        dao.getAllWithText().map { images ->
-            FuzzyMatcher.search(images, query)
-        }.flowOn(Dispatchers.IO)
+    fun fuzzySearch(query: String): Flow<List<FuzzyMatcher.ScoredResult>> = flow {
+        val words = splitFuzzyWords(query)
+        if (words.isEmpty()) { emit(emptyList()); return@flow }
+        // Pre-filter in SQL so we never load the whole corpus into memory; the
+        // matcher then re-ranks the candidates with its exact scoring.
+        val candidates = dao.searchFuzzyCandidates(fuzzyLikeQuery("scanned_images", words))
+        emit(FuzzyMatcher.search(candidates, query))
+    }.flowOn(Dispatchers.IO)
 
     fun searchVideos(query: String): Flow<List<ScannedVideo>> =
-        videoDao?.search(query)?.flowOn(Dispatchers.IO) ?: flowOf(emptyList())
+        FtsQuery.sanitize(query)?.let { match ->
+            (videoDao?.search(match) ?: flowOf(emptyList()))
+                .catch { emit(emptyList()) }
+                .flowOn(Dispatchers.IO)
+        } ?: flowOf(emptyList())
 
-    fun fuzzySearchVideos(query: String): Flow<List<FuzzyMatcher.ScoredVideoResult>> =
-        videoDao?.getAllWithText()?.map { videos ->
-            FuzzyMatcher.searchVideos(videos, query)
-        }?.flowOn(Dispatchers.IO) ?: flowOf(emptyList())
+    fun fuzzySearchVideos(query: String): Flow<List<FuzzyMatcher.ScoredVideoResult>> = flow {
+        val words = splitFuzzyWords(query)
+        val vdao = videoDao
+        if (words.isEmpty() || vdao == null) { emit(emptyList()); return@flow }
+        val candidates = vdao.searchFuzzyCandidates(fuzzyLikeQuery("scanned_videos", words))
+        emit(FuzzyMatcher.searchVideos(candidates, query))
+    }.flowOn(Dispatchers.IO)
+
+    private fun splitFuzzyWords(query: String): List<String> =
+        query.lowercase().trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+
+    private fun escapeLike(s: String): String =
+        s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    private fun fuzzyLikeQuery(table: String, words: List<String>): SimpleSQLiteQuery {
+        val clauses = words.joinToString(" OR ") { "extractedText LIKE ? ESCAPE '\\'" }
+        val sql = "SELECT * FROM $table WHERE extractedText != '' AND ($clauses)"
+        val args = words.map { "%${escapeLike(it)}%" }.toTypedArray<Any>()
+        return SimpleSQLiteQuery(sql, args)
+    }
 
     fun getAllTracked() = dao.getAllTracked().flowOn(Dispatchers.IO)
 
@@ -95,12 +128,16 @@ class ImageRepository(
     }
 
     fun startScan() {
-        if (_isScanning.value) return
-
-        _isScanning.value = true
-        _scanProgress.value = ScanProgress()
-
+        // Capture any in-flight scan so the new one waits for it to actually
+        // stop before starting. Without cancelAndJoin, a cancel()+start()
+        // sequence (e.g. confirming a new folder selection) could let two
+        // scans overlap and race on _scanProgress / the OCR semaphores.
+        val prior = scanJob
         scanJob = scope.launch {
+            prior?.cancelAndJoin()
+            regenJob?.cancelAndJoin()
+            _isScanning.value = true
+            _scanProgress.value = ScanProgress()
             try {
                 scanImages()
                 if (userPreferences?.indexVideos == true && videoDao != null && videoProcessor != null) {
@@ -197,6 +234,9 @@ class ImageRepository(
             .filter { it !in currentIds }
         if (deletedIds.isNotEmpty()) {
             dao.deleteByIds(deletedIds)
+            // Drop the cached thumbnail for each removed video so cacheDir
+            // doesn't accumulate orphaned thumb_<id>.jpg files over time.
+            deletedIds.forEach { processor.deleteThumbnail(it) }
         }
 
         val totalVideos = toScan.size
@@ -246,8 +286,63 @@ class ImageRepository(
         _scanProgress.value = ScanProgress(totalVideos, totalVideos, 0)
     }
 
+    /**
+     * One-off repair pass: for every tracked video whose thumbnail file is
+     * missing (or whose path was never populated), decode a single frame and
+     * store a fresh thumbnail in filesDir. Unlike a normal scan this touches
+     * videos regardless of dateModified, so it recovers thumbnails lost to
+     * cacheDir eviction. Reports progress on the scan channel so the UI bar
+     * shows it and [cancelScan] can abort it.
+     */
+    fun regenerateMissingVideoThumbnails() {
+        val processor = videoProcessor ?: return
+        val dao = videoDao ?: return
+        regenJob = scope.launch {
+            scanJob?.cancelAndJoin()
+            _isScanning.value = true
+            _scanProgress.value = ScanProgress()
+            try {
+                val tracked = dao.getAll()
+                val missing = tracked.filter {
+                    it.thumbnailPath.isBlank() || !java.io.File(it.thumbnailPath).exists()
+                }
+                val total = missing.size
+                if (total == 0) {
+                    _scanProgress.value = ScanProgress(0, 0)
+                    return@launch
+                }
+                val processed = AtomicInteger(0)
+                val startTime = System.currentTimeMillis()
+                _scanProgress.value = ScanProgress(0, total)
+                coroutineScope {
+                    for (v in missing) {
+                        launch {
+                            videoScanSemaphore.withPermit {
+                                val path = processor.regenerateThumbnail(v.contentUri, v.mediaStoreId)
+                                if (path != null) {
+                                    dao.updateThumbnailPath(v.mediaStoreId, path)
+                                }
+                                val count = processed.incrementAndGet()
+                                val elapsedMs = System.currentTimeMillis() - startTime
+                                val eta = if (count >= 2) {
+                                    val avgMs = elapsedMs.toDouble() / count
+                                    ((total - count) * avgMs / 1000).toLong()
+                                } else null
+                                _scanProgress.value = ScanProgress(count, total, eta)
+                            }
+                        }
+                    }
+                }
+                _scanProgress.value = ScanProgress(total, total, 0)
+            } finally {
+                _isScanning.value = false
+            }
+        }
+    }
+
     fun cancelScan() {
         scanJob?.cancel()
+        regenJob?.cancel()
         _isScanning.value = false
         _scanProgress.value = ScanProgress()
     }

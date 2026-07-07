@@ -103,7 +103,7 @@ class VideoProcessor(
     }
 
     private fun saveThumbnail(bitmap: Bitmap, mediaStoreId: Long): String {
-        val dir = File(context.cacheDir, "video_thumbs").apply { mkdirs() }
+        val dir = File(context.filesDir, "video_thumbs").apply { mkdirs() }
         val file = File(dir, "thumb_$mediaStoreId.jpg")
         return try {
             FileOutputStream(file).use { out ->
@@ -115,6 +115,41 @@ class VideoProcessor(
             ""
         }
     }
+
+    fun deleteThumbnail(mediaStoreId: Long) {
+        val file = File(File(context.filesDir, "video_thumbs"), "thumb_$mediaStoreId.jpg")
+        if (file.exists()) file.delete()
+    }
+
+    /**
+     * Regenerates only the thumbnail for a video (no OCR), used by the
+     * "repair missing thumbnails" pass. Samples a frame ~10% into the clip for
+     * a more representative still than the very first frame, writing it to
+     * filesDir via [saveThumbnail].
+     */
+    suspend fun regenerateThumbnail(contentUri: String, mediaStoreId: Long): String? =
+        withContext(Dispatchers.IO) {
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(context, Uri.parse(contentUri))
+                val durationMs = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_DURATION
+                )?.toLongOrNull() ?: 0L
+                val timeUs = if (durationMs > 0L) durationMs * 100L else 0L
+                val bitmap = retrieveScaledFrame(retriever, timeUs) ?: return@withContext null
+                val path = saveThumbnail(bitmap, mediaStoreId)
+                bitmap.recycle()
+                path.takeIf { it.isNotBlank() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            } finally {
+                try {
+                    retriever.release()
+                } catch (_: Exception) {
+                }
+            }
+        }
 
     companion object {
         fun parseFrames(framesJson: String): List<FrameOcr> {
@@ -131,6 +166,47 @@ class VideoProcessor(
                 e.printStackTrace()
                 emptyList()
             }
+        }
+        /**
+         * Decodes a single downscaled frame for the grid press-and-hold preview.
+         * Returns null on any failure so the caller keeps showing the static
+         * thumbnail. Uses [MediaMetadataRetriever.getScaledFrameAtTime] on API
+         * 27+; on API 26 falls back to a full decode plus a manual downscale.
+         */
+        fun decodePreviewFrame(
+            retriever: MediaMetadataRetriever,
+            timeUs: Long,
+            maxDimension: Int = 256
+        ): Bitmap? = try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+                retriever.getScaledFrameAtTime(
+                    timeUs,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                    maxDimension,
+                    maxDimension
+                ) ?: retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    ?.let { scaleDown(it, maxDimension) }
+            } else {
+                retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    ?.let { scaleDown(it, maxDimension) }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+
+        private fun scaleDown(src: Bitmap, maxDimension: Int): Bitmap {
+            val maxSide = maxOf(src.width, src.height)
+            if (maxSide <= maxDimension) return src
+            val ratio = maxDimension.toFloat() / maxSide
+            val scaled = Bitmap.createScaledBitmap(
+                src,
+                (src.width * ratio).toInt().coerceAtLeast(1),
+                (src.height * ratio).toInt().coerceAtLeast(1),
+                true
+            )
+            if (scaled !== src) src.recycle()
+            return scaled
         }
     }
 }

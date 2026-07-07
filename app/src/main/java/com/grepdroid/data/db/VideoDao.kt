@@ -2,6 +2,7 @@ package com.grepdroid.data.db
 
 import androidx.room.*
 import kotlinx.coroutines.flow.Flow
+import androidx.sqlite.db.SupportSQLiteQuery
 
 data class TrackedVideo(
     val mediaStoreId: Long,
@@ -23,11 +24,17 @@ interface VideoDao {
     @Query("DELETE FROM scanned_videos WHERE mediaStoreId IN (:ids)")
     suspend fun deleteByIds(ids: List<Long>)
 
+    @Query("SELECT * FROM scanned_videos")
+    suspend fun getAll(): List<ScannedVideo>
+
+    @Query("UPDATE scanned_videos SET thumbnailPath = :path WHERE mediaStoreId = :mediaStoreId")
+    suspend fun updateThumbnailPath(mediaStoreId: Long, path: String)
+
     @Query("SELECT * FROM scanned_videos WHERE mediaStoreId = :mediaStoreId")
     suspend fun getById(mediaStoreId: Long): ScannedVideo?
 
-    @Query("SELECT * FROM scanned_videos WHERE extractedText != '' ORDER BY scannedAt DESC LIMIT 1000")
-    fun getAllWithText(): Flow<List<ScannedVideo>>
+    @RawQuery
+    suspend fun searchFuzzyCandidates(query: SupportSQLiteQuery): List<ScannedVideo>
 
     @Query("SELECT COUNT(*) FROM scanned_videos")
     fun getTotalCount(): Flow<Int>

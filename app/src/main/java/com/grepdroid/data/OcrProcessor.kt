@@ -3,6 +3,7 @@ package com.grepdroid.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.ExifInterface
 import android.net.Uri
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -19,8 +20,8 @@ class OcrProcessor(private val context: Context) {
     suspend fun extractTextFromUri(contentUri: String): String = withContext(Dispatchers.IO) {
         try {
             val bitmap = loadAndScaleBitmap(contentUri)
-            val text = extractTextFromBitmap(bitmap, recycleAfter = true)
-            text
+            val rotation = readOrientationDegrees(contentUri)
+            extractTextFromBitmap(bitmap, rotation, recycleAfter = true)
         } catch (e: Exception) {
             e.printStackTrace()
             ""
@@ -29,10 +30,11 @@ class OcrProcessor(private val context: Context) {
 
     suspend fun extractTextFromBitmap(
         bitmap: Bitmap,
+        rotationDegrees: Int = 0,
         recycleAfter: Boolean = false
     ): String = withContext(Dispatchers.IO) {
         try {
-            val inputImage = InputImage.fromBitmap(bitmap, 0)
+            val inputImage = InputImage.fromBitmap(bitmap, rotationDegrees)
             val visionText = textRecognizer.process(inputImage).await()
             visionText.text
         } catch (e: Exception) {
@@ -85,6 +87,30 @@ class OcrProcessor(private val context: Context) {
             sampleSize
         }
     }
+
+    /**
+     * EXIF orientation that [BitmapFactory] ignores but ML Kit needs to read
+     * the image upright. Returns clockwise degrees (0/90/180/270) for content
+     * URIs, 0 on any error or for formats without orientation metadata.
+     */
+    private fun readOrientationDegrees(contentUri: String): Int =
+        try {
+            context.contentResolver.openFileDescriptor(Uri.parse(contentUri), "r")?.use { pfd ->
+                val exif = ExifInterface(pfd.fileDescriptor)
+                when (exif.getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL
+                )) {
+                    ExifInterface.ORIENTATION_ROTATE_90 -> 90
+                    ExifInterface.ORIENTATION_ROTATE_180 -> 180
+                    ExifInterface.ORIENTATION_ROTATE_270 -> 270
+                    else -> 0
+                }
+            } ?: 0
+        } catch (e: Exception) {
+            e.printStackTrace()
+            0
+        }
 
     fun cleanup() {
         textRecognizer.close()
