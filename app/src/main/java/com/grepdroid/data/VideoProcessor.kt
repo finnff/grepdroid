@@ -33,7 +33,7 @@ data class ProcessedVideo(
 class VideoProcessor(
     private val context: Context,
     private val ocrProcessor: OcrProcessor,
-    private val frameIntervalMs: Long = 1000L,
+    private val frameIntervalMs: Long = DEFAULT_FRAME_INTERVAL_MS,
     private val maxFrameDimension: Int = 1280
 ) {
 
@@ -152,6 +152,9 @@ class VideoProcessor(
         }
 
     companion object {
+        /** Gap between OCR'd frames; also how long each search hit is assumed to stay on screen. */
+        const val DEFAULT_FRAME_INTERVAL_MS = 1000L
+
         fun parseFrames(framesJson: String): List<FrameOcr> {
             if (framesJson.isBlank()) return emptyList()
             return try {

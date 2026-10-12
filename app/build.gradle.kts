@@ -56,6 +56,7 @@ dependencies {
     // Lifecycle
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
 
     // Room
     implementation(libs.androidx.room.runtime)
@@ -73,6 +74,10 @@ dependencies {
 
     // Image loading
     implementation(libs.coil.compose)
+
+    // In-app video playback
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.ui.compose)
 
     // ML Kit Text Recognition
     implementation(libs.mlkit.text.recognition)
