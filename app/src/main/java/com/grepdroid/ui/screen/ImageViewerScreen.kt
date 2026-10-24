@@ -30,6 +30,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
 import com.grepdroid.GrepdroidApp
+import com.grepdroid.data.RepeatedLines
 import com.grepdroid.data.db.ScannedImage
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -43,6 +44,11 @@ fun ImageViewerScreen(
     val prefs = remember { (context.applicationContext as GrepdroidApp).userPreferences }
     var fullscreen by remember { mutableStateOf(false) }
     var showChooser by remember { mutableStateOf(false) }
+    var hideRepetitions by remember { mutableStateOf(prefs.hideRepeatedLines) }
+    val shownText = remember(image?.extractedText, hideRepetitions) {
+        val text = image?.extractedText.orEmpty()
+        if (hideRepetitions) RepeatedLines.collapse(text) else text
+    }
 
     Scaffold(
         topBar = {
@@ -70,12 +76,10 @@ fun ImageViewerScreen(
                         Icon(Icons.AutoMirrored.Filled.OpenInNew, "Open in gallery")
                     }
                     IconButton(onClick = {
-                        image?.extractedText?.let { text ->
-                            if (text.isNotBlank()) {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("Extracted text", text))
-                                Toast.makeText(context, "Text copied", Toast.LENGTH_SHORT).show()
-                            }
+                        if (shownText.isNotBlank()) {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Extracted text", shownText))
+                            Toast.makeText(context, "Text copied", Toast.LENGTH_SHORT).show()
                         }
                     }) {
                         Icon(Icons.Default.ContentCopy, "Copy text")
@@ -121,18 +125,13 @@ fun ImageViewerScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                Text(
-                    text = "Extracted Text",
-                    fontSize = 12.sp,
-                    color = Color.Gray,
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
-                Text(
-                    text = image.extractedText,
-                    fontSize = 14.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
+                ExtractedTextSection(
+                    text = shownText,
+                    hideRepetitions = hideRepetitions,
+                    onHideRepetitionsChange = {
+                        hideRepetitions = it
+                        prefs.hideRepeatedLines = it
+                    }
                 )
             }
         } else {

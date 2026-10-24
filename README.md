@@ -19,6 +19,7 @@ Android app that OCR-scans your photo gallery **and your videos** and lets you s
   - Tap to show/hide controls, double-tap left/right to skip ±10s, drag the seek bar to scrub
   - Playback speed (1x / 1.5x / 2x / 0.5x), mute, fullscreen (landscape clips rotate sideways; turning the phone sideways goes fullscreen)
   - Pauses for calls/other audio and when headphones are unplugged; releases the decoder while the app is in the background
+- **Selectable extracted text** — long-press to select and copy part of the OCR text; the "Hide repetitions" switch collapses lines that repeat back-to-back (e.g. a caption OCR'd on every video frame)
 - **Open in another app** — still one tap away (top bar, or fullscreen top-right) for VLC etc. (passes along the current playback position)
 - **App chooser with remembered defaults** — pick which gallery / player to use once and the app remembers it; clear it any time from the chooser dialog
 

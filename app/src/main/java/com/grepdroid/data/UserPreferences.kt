@@ -72,6 +72,12 @@ class UserPreferences(context: Context) {
             prefs.edit().putString(KEY_MEDIA_FILTER, value).apply()
         }
 
+    var hideRepeatedLines: Boolean
+        get() = prefs.getBoolean(KEY_HIDE_REPEATED_LINES, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_HIDE_REPEATED_LINES, value).apply()
+        }
+
     companion object {
         private const val KEY_BUCKET_IDS = "selected_bucket_ids"
         private const val KEY_FUZZY_SEARCH = "use_fuzzy_search"
@@ -82,5 +88,6 @@ class UserPreferences(context: Context) {
         private const val KEY_DEFAULT_GALLERY_PKG = "default_gallery_pkg"
         private const val KEY_DEFAULT_VIDEO_PLAYER_PKG = "default_video_player_pkg"
         private const val KEY_MEDIA_FILTER = "media_filter"
+        private const val KEY_HIDE_REPEATED_LINES = "hide_repeated_lines"
     }
 }

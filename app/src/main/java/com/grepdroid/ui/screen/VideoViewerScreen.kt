@@ -26,6 +26,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.grepdroid.GrepdroidApp
+import com.grepdroid.data.RepeatedLines
 import com.grepdroid.data.VideoMatches
 import com.grepdroid.data.VideoProcessor
 import com.grepdroid.data.db.ScannedVideo
@@ -45,6 +46,11 @@ fun VideoViewerScreen(
     val context = LocalContext.current
     val prefs = remember { (context.applicationContext as GrepdroidApp).userPreferences }
     var showChooser by remember { mutableStateOf(false) }
+    var hideRepetitions by remember { mutableStateOf(prefs.hideRepeatedLines) }
+    val shownText = remember(video?.extractedText, hideRepetitions) {
+        val text = video?.extractedText.orEmpty()
+        if (hideRepetitions) RepeatedLines.collapse(text) else text
+    }
     var isFullscreen by remember { mutableStateOf(false) }
     val detailsScrollState = rememberScrollState()
 
@@ -93,12 +99,10 @@ fun VideoViewerScreen(
                             Icon(Icons.AutoMirrored.Filled.OpenInNew, "Open in another app")
                         }
                         IconButton(onClick = {
-                            video?.extractedText?.let { text ->
-                                if (text.isNotBlank()) {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("Extracted text", text))
-                                    Toast.makeText(context, "Text copied", Toast.LENGTH_SHORT).show()
-                                }
+                            if (shownText.isNotBlank()) {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("Extracted text", shownText))
+                                Toast.makeText(context, "Text copied", Toast.LENGTH_SHORT).show()
                             }
                         }) {
                             Icon(Icons.Default.ContentCopy, "Copy text")
@@ -201,18 +205,13 @@ fun VideoViewerScreen(
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        Text(
-                            text = "Extracted Text",
-                            fontSize = 12.sp,
-                            color = Color.Gray,
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        )
-                        Text(
-                            text = video.extractedText,
-                            fontSize = 14.sp,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp)
+                        ExtractedTextSection(
+                            text = shownText,
+                            hideRepetitions = hideRepetitions,
+                            onHideRepetitionsChange = {
+                                hideRepetitions = it
+                                prefs.hideRepeatedLines = it
+                            }
                         )
                     }
                 }
