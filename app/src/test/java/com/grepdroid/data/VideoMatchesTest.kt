@@ -65,4 +65,34 @@ class VideoMatchesTest {
         val result = VideoMatches.findRanges(frames(0L to "x", 2000L to "x"), "x", frameIntervalMs = 2000L)
         assertEquals(listOf(0L until 4000L), result)
     }
+
+    @Test
+    fun `speech segments match with their own length`() {
+        val result = VideoMatches.findRanges(
+            frames(0L to "intro"),
+            "belasting",
+            speech = listOf(TranscriptSegment(2500L, 7200L, "Belasting is niet verplicht"))
+        )
+        assertEquals(listOf(2500L until 7200L), result)
+    }
+
+    @Test
+    fun `overlapping OCR and speech hits merge`() {
+        val result = VideoMatches.findRanges(
+            frames(3000L to "SALE", 9000L to "SALE"),
+            "sale",
+            speech = listOf(TranscriptSegment(1000L, 3500L, "big sale today"))
+        )
+        assertEquals(listOf(1000L until 4000L, 9000L until 10000L), result)
+    }
+
+    @Test
+    fun `whole-query hit in speech beats single-word hits on screen`() {
+        val result = VideoMatches.findRanges(
+            frames(0L to "foo", 1000L to "bar"),
+            "foo bar",
+            speech = listOf(TranscriptSegment(5000L, 6000L, "and then foo bar"))
+        )
+        assertEquals(listOf(5000L until 6000L), result)
+    }
 }

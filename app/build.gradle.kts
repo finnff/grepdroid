@@ -17,6 +17,9 @@ android {
         versionName = "2.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // sherpa-onnx ships ~30 MB of native code per ABI; only 64-bit ARM phones are targeted.
+        ndk { abiFilters += "arm64-v8a" }
     }
 
     buildTypes {
@@ -82,6 +85,9 @@ dependencies {
     // ML Kit Text Recognition
     implementation(libs.mlkit.text.recognition)
     implementation(libs.coroutines.play.services)
+
+    // On-device speech recognition (Parakeet via sherpa-onnx) for video transcripts
+    implementation(libs.sherpa.onnx)
 
     // Activity Compose
     implementation(libs.androidx.activity.compose)

@@ -9,6 +9,11 @@ data class TrackedVideo(
     val dateModified: Long
 )
 
+data class UntranscribedVideo(
+    val mediaStoreId: Long,
+    val contentUri: String
+)
+
 @Dao
 interface VideoDao {
 
@@ -32,6 +37,12 @@ interface VideoDao {
 
     @Query("SELECT * FROM scanned_videos WHERE mediaStoreId = :mediaStoreId")
     suspend fun getById(mediaStoreId: Long): ScannedVideo?
+
+    @Query("SELECT mediaStoreId, contentUri FROM scanned_videos WHERE transcribedAt = 0 ORDER BY dateModified DESC")
+    suspend fun getUntranscribed(): List<UntranscribedVideo>
+
+    @Query("UPDATE scanned_videos SET transcript = :transcript, transcriptSegmentsJson = :segmentsJson, transcribedAt = :transcribedAt WHERE mediaStoreId = :mediaStoreId")
+    suspend fun updateTranscript(mediaStoreId: Long, transcript: String, segmentsJson: String, transcribedAt: Long)
 
     @RawQuery
     suspend fun searchFuzzyCandidates(query: SupportSQLiteQuery): List<ScannedVideo>

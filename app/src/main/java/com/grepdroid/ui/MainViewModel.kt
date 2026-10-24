@@ -3,6 +3,7 @@ package com.grepdroid.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.grepdroid.data.MediaStoreScanner
+import com.grepdroid.data.SpeechModel
 import com.grepdroid.data.UserPreferences
 import com.grepdroid.repository.ImageRepository
 import com.grepdroid.repository.ScanProgress
@@ -36,6 +37,8 @@ data class UiState(
     val availableVideoBuckets: List<MediaStoreScanner.VideoBucket> = emptyList(),
     val selectedVideoBucketIds: Set<Long> = emptySet(),
     val indexVideos: Boolean = false,
+    val transcribeSpeech: Boolean = false,
+    val speechModelState: SpeechModel.State = SpeechModel.State.Missing,
     val showFolderPicker: Boolean = false,
     val gridColumns: Int = 3,
     val sortOrder: SortOrder = SortOrder.BEST_MATCH,
@@ -48,7 +51,8 @@ data class UiState(
 class MainViewModel(
     private val repository: ImageRepository,
     private val userPreferences: UserPreferences? = null,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val speechModel: SpeechModel? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(UiState(
@@ -58,6 +62,7 @@ class MainViewModel(
             try { SortOrder.valueOf(it) } catch (_: Exception) { SortOrder.BEST_MATCH }
         } ?: SortOrder.BEST_MATCH,
         indexVideos = userPreferences?.indexVideos ?: false,
+        transcribeSpeech = userPreferences?.transcribeSpeech ?: false,
         mediaFilter = userPreferences?.mediaFilter?.let {
             try { MediaFilter.valueOf(it) } catch (_: Exception) { MediaFilter.BOTH }
         } ?: MediaFilter.BOTH
@@ -84,6 +89,23 @@ class MainViewModel(
         viewModelScope.launch {
             repository.scanProgress.collect { progress ->
                 _uiState.update { it.copy(scanProgress = progress) }
+            }
+        }
+
+        speechModel?.let { model ->
+            viewModelScope.launch {
+                var previous: SpeechModel.State? = null
+                model.state.collect { state ->
+                    _uiState.update { it.copy(speechModelState = state) }
+                    // Start transcribing as soon as a download finishes, rather than
+                    // waiting for the next scan.
+                    if (previous is SpeechModel.State.Downloading && state == SpeechModel.State.Ready &&
+                        userPreferences?.transcribeSpeech == true && userPreferences.indexVideos
+                    ) {
+                        repository.startScan()
+                    }
+                    previous = state
+                }
             }
         }
 
@@ -260,7 +282,8 @@ class MainViewModel(
                 selectedVideoBucketIds = uiSelectedVideos,
                 totalImagesInSelection = totalImagesInSel,
                 totalVideosInSelection = totalVideosInSel,
-                indexVideos = repository.getIndexVideos()
+                indexVideos = repository.getIndexVideos(),
+                transcribeSpeech = userPreferences?.transcribeSpeech ?: false
             ) }
         }
     }
@@ -307,6 +330,22 @@ class MainViewModel(
         _uiState.update { it.copy(indexVideos = !it.indexVideos) }
     }
 
+    fun toggleTranscribeSpeech() {
+        _uiState.update { it.copy(transcribeSpeech = !it.transcribeSpeech) }
+    }
+
+    fun downloadSpeechModel() {
+        speechModel?.download()
+    }
+
+    fun cancelSpeechModelDownload() {
+        speechModel?.cancelDownload()
+    }
+
+    fun deleteSpeechModel() {
+        speechModel?.delete()
+    }
+
     fun confirmBucketSelection() {
         val state = _uiState.value
 
@@ -329,6 +368,7 @@ class MainViewModel(
 
         // Video buckets + toggle
         repository.setIndexVideos(state.indexVideos)
+        userPreferences?.transcribeSpeech = state.transcribeSpeech
         val selectedVideos = state.selectedVideoBucketIds
         val allVideoBucketIds = state.availableVideoBuckets.map { it.bucketId }.toSet()
         val videosToStore = if (selectedVideos == allVideoBucketIds) emptySet() else selectedVideos
@@ -359,7 +399,8 @@ class MainViewModel(
             showFolderPicker = false,
             selectedBucketIds = restoredImages,
             selectedVideoBucketIds = restoredVideos,
-            indexVideos = repository.getIndexVideos()
+            indexVideos = repository.getIndexVideos(),
+            transcribeSpeech = userPreferences?.transcribeSpeech ?: false
         ) }
     }
 }

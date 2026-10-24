@@ -4,16 +4,20 @@ import com.grepdroid.data.FtsQuery
 import com.grepdroid.data.FuzzyMatcher
 import com.grepdroid.data.MediaStoreScanner
 import com.grepdroid.data.OcrProcessor
+import com.grepdroid.data.SpeechEngine
+import com.grepdroid.data.SpeechTranscriber
 import com.grepdroid.data.UserPreferences
 import com.grepdroid.data.VideoProcessor
 import com.grepdroid.data.db.ImageDao
 import com.grepdroid.data.db.ScannedVideo
 import com.grepdroid.data.db.VideoDao
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -24,7 +28,9 @@ import androidx.sqlite.db.SimpleSQLiteQuery
 data class ScanProgress(
     val processed: Int = 0,
     val total: Int = 0,
-    val estimatedSecondsRemaining: Long? = null
+    val estimatedSecondsRemaining: Long? = null,
+    /** What's being worked on, when it isn't plain OCR (e.g. "Transcribing speech"). */
+    val label: String? = null
 ) {
     val fraction: Float get() = if (total == 0) 0f else processed.toFloat() / total
 }
@@ -36,7 +42,8 @@ class ImageRepository(
     private val userPreferences: UserPreferences? = null,
     private val dispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
     private val videoDao: VideoDao? = null,
-    private val videoProcessor: VideoProcessor? = null
+    private val videoProcessor: VideoProcessor? = null,
+    private val speechEngine: SpeechEngine? = null
 ) {
 
     private val scanSemaphore = Semaphore(4)
@@ -78,7 +85,7 @@ class ImageRepository(
         val words = splitFuzzyWords(query)
         val vdao = videoDao
         if (words.isEmpty() || vdao == null) { emit(emptyList()); return@flow }
-        val candidates = vdao.searchFuzzyCandidates(fuzzyLikeQuery("scanned_videos", words))
+        val candidates = vdao.searchFuzzyCandidates(fuzzyLikeQuery("scanned_videos", words, listOf("extractedText", "transcript")))
         emit(FuzzyMatcher.searchVideos(candidates, query))
     }.flowOn(Dispatchers.IO)
 
@@ -88,10 +95,15 @@ class ImageRepository(
     private fun escapeLike(s: String): String =
         s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
-    private fun fuzzyLikeQuery(table: String, words: List<String>): SimpleSQLiteQuery {
-        val clauses = words.joinToString(" OR ") { "extractedText LIKE ? ESCAPE '\\'" }
-        val sql = "SELECT * FROM $table WHERE extractedText != '' AND ($clauses)"
-        val args = words.map { "%${escapeLike(it)}%" }.toTypedArray<Any>()
+    private fun fuzzyLikeQuery(
+        table: String,
+        words: List<String>,
+        columns: List<String> = listOf("extractedText")
+    ): SimpleSQLiteQuery {
+        val clauses = words.flatMap { columns }.joinToString(" OR ") { "$it LIKE ? ESCAPE '\\'" }
+        val notEmpty = columns.joinToString(" OR ") { "$it != ''" }
+        val sql = "SELECT * FROM $table WHERE ($notEmpty) AND ($clauses)"
+        val args = words.flatMap { w -> columns.map { "%${escapeLike(w)}%" } }.toTypedArray<Any>()
         return SimpleSQLiteQuery(sql, args)
     }
 
@@ -142,6 +154,7 @@ class ImageRepository(
                 scanImages()
                 if (userPreferences?.indexVideos == true && videoDao != null && videoProcessor != null) {
                     scanVideos()
+                    if (userPreferences.transcribeSpeech) transcribeVideos()
                 }
             } finally {
                 _isScanning.value = false
@@ -284,6 +297,64 @@ class ImageRepository(
         }
 
         _scanProgress.value = ScanProgress(totalVideos, totalVideos, 0)
+    }
+
+    /**
+     * Transcribes every indexed video that hasn't been yet (new ones, and all existing
+     * ones the first time this runs), newest first, one at a time. Skipped until the
+     * speech model has been downloaded. Waits while the phone is overheating, and
+     * re-opens the recognizer with more or fewer threads when the charger is plugged
+     * in or out.
+     */
+    private suspend fun transcribeVideos() {
+        val engine = speechEngine ?: return
+        val dao = videoDao ?: return
+        if (!engine.model.isReady) return
+        val todo = dao.getUntranscribed()
+        if (todo.isEmpty()) return
+
+        val label = "Transcribing speech"
+        val startTime = System.currentTimeMillis()
+        _scanProgress.value = ScanProgress(0, todo.size, label = label)
+        var transcriber: SpeechTranscriber? = null
+        try {
+            for ((index, video) in todo.withIndex()) {
+                while (engine.isOverheating()) {
+                    _scanProgress.value = _scanProgress.value.copy(label = "Phone is hot, pausing transcription")
+                    delay(15_000)
+                }
+                val threads = engine.preferredThreads()
+                val current = transcriber?.takeIf { it.threads == threads } ?: run {
+                    transcriber?.close()
+                    transcriber = null
+                    engine.open(threads).also { transcriber = it }
+                }
+
+                val now = System.currentTimeMillis()
+                try {
+                    // A video without an audio track is "done" with an empty transcript.
+                    val transcript = current.transcribe(video.contentUri)
+                    dao.updateTranscript(
+                        video.mediaStoreId,
+                        transcript?.text.orEmpty(),
+                        transcript?.segmentsJson.orEmpty(),
+                        now
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    dao.updateTranscript(video.mediaStoreId, "", "", ScannedVideo.TRANSCRIBE_FAILED)
+                }
+
+                val count = index + 1
+                val elapsedMs = System.currentTimeMillis() - startTime
+                val eta = if (count >= 2) (elapsedMs.toDouble() / count * (todo.size - count) / 1000).toLong() else null
+                _scanProgress.value = ScanProgress(count, todo.size, eta, label)
+            }
+        } finally {
+            transcriber?.close()
+        }
     }
 
     /**

@@ -76,7 +76,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun GrepdroidAppContent() {
         val app = remember { application as GrepdroidApp }
-        val viewModel: MainViewModel = viewModel(factory = MainViewModelFactory(app.repository, app.userPreferences))
+        val viewModel: MainViewModel = viewModel(factory = MainViewModelFactory(app.repository, app.userPreferences, app.speechModel))
         val gridState = rememberLazyGridState()
 
         var currentRoute by remember { mutableStateOf(getScreenRoute(Screen.Search)) }
@@ -158,10 +158,11 @@ class MainActivity : ComponentActivity() {
 
 class MainViewModelFactory(
     private val repository: com.grepdroid.repository.ImageRepository,
-    private val userPreferences: com.grepdroid.data.UserPreferences
+    private val userPreferences: com.grepdroid.data.UserPreferences,
+    private val speechModel: com.grepdroid.data.SpeechModel
 ) : androidx.lifecycle.ViewModelProvider.Factory {
     override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
         @Suppress("UNCHECKED_CAST")
-        return com.grepdroid.ui.MainViewModel(repository, userPreferences) as T
+        return com.grepdroid.ui.MainViewModel(repository, userPreferences, speechModel = speechModel) as T
     }
 }

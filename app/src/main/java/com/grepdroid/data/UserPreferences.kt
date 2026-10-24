@@ -78,6 +78,13 @@ class UserPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_HIDE_REPEATED_LINES, value).apply()
         }
 
+    /** Transcribe the speech in indexed videos (needs the speech model downloaded). */
+    var transcribeSpeech: Boolean
+        get() = prefs.getBoolean(KEY_TRANSCRIBE_SPEECH, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_TRANSCRIBE_SPEECH, value).apply()
+        }
+
     companion object {
         private const val KEY_BUCKET_IDS = "selected_bucket_ids"
         private const val KEY_FUZZY_SEARCH = "use_fuzzy_search"
@@ -89,5 +96,6 @@ class UserPreferences(context: Context) {
         private const val KEY_DEFAULT_VIDEO_PLAYER_PKG = "default_video_player_pkg"
         private const val KEY_MEDIA_FILTER = "media_filter"
         private const val KEY_HIDE_REPEATED_LINES = "hide_repeated_lines"
+        private const val KEY_TRANSCRIBE_SPEECH = "transcribe_speech"
     }
 }

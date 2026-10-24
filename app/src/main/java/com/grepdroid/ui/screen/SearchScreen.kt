@@ -186,7 +186,8 @@ fun SearchScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "${progress.processed} / ${progress.total}",
+                        text = listOfNotNull(progress.label, "${progress.processed} / ${progress.total}")
+                            .joinToString(" · "),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -274,6 +275,12 @@ fun SearchScreen(
             onToggleVideoBucket = { viewModel.toggleVideoBucket(it) },
             onSelectAllVideos = { viewModel.selectAllVideoBuckets() },
             onToggleIndexVideos = { viewModel.toggleIndexVideos() },
+            transcribeSpeech = uiState.transcribeSpeech,
+            speechModelState = uiState.speechModelState,
+            onToggleTranscribeSpeech = { viewModel.toggleTranscribeSpeech() },
+            onDownloadSpeechModel = { viewModel.downloadSpeechModel() },
+            onCancelSpeechModelDownload = { viewModel.cancelSpeechModelDownload() },
+            onDeleteSpeechModel = { viewModel.deleteSpeechModel() },
             onConfirm = { viewModel.confirmBucketSelection() },
             onDismiss = { viewModel.dismissFolderPicker() }
         )

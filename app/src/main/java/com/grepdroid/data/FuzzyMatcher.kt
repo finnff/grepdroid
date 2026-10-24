@@ -31,7 +31,7 @@ object FuzzyMatcher {
         if (queryWords.isEmpty()) return emptyList()
 
         return videos.mapNotNull { video ->
-            val score = score(video.extractedText, queryLower, queryWords)
+            val score = score(video.extractedText + "\n" + video.transcript, queryLower, queryWords)
             if (score > 0) ScoredVideoResult(video, score) else null
         }
             .sortedByDescending { it.matchPercent }

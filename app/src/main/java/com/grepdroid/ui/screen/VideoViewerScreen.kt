@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.grepdroid.GrepdroidApp
 import com.grepdroid.data.RepeatedLines
+import com.grepdroid.data.Transcript
 import com.grepdroid.data.VideoMatches
 import com.grepdroid.data.VideoProcessor
 import com.grepdroid.data.db.ScannedVideo
@@ -54,9 +55,16 @@ fun VideoViewerScreen(
     var isFullscreen by remember { mutableStateOf(false) }
     val detailsScrollState = rememberScrollState()
 
-    val matchRanges = remember(video, searchQuery) {
+    val transcriptSegments = remember(video?.transcriptSegmentsJson) {
+        Transcript.parseSegments(video?.transcriptSegmentsJson.orEmpty())
+    }
+    val matchRanges = remember(video, searchQuery, transcriptSegments) {
         if (video == null) emptyList()
-        else VideoMatches.findRanges(VideoProcessor.parseFrames(video.frameTimestampsJson), searchQuery)
+        else VideoMatches.findRanges(
+            VideoProcessor.parseFrames(video.frameTimestampsJson),
+            searchQuery,
+            speech = transcriptSegments
+        )
     }
     // Start on the first frame that matched the search, like the old "Open at MM:SS" did.
     val player = video?.let {
@@ -213,6 +221,19 @@ fun VideoViewerScreen(
                                 prefs.hideRepeatedLines = it
                             }
                         )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        TranscriptSection(
+                            transcribedAt = video.transcribedAt,
+                            segments = transcriptSegments,
+                            onSeek = {
+                                player?.seekTo(it)
+                                player?.play()
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
                     }
                 }
             }

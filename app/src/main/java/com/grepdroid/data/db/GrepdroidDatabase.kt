@@ -14,7 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ScannedVideo::class,
         ScannedVideoFts::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class GrepdroidDatabase : RoomDatabase() {
@@ -53,6 +53,30 @@ abstract class GrepdroidDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds the speech transcript columns and re-creates the video FTS table so it
+         * indexes the transcript too. The old content-sync triggers only copy
+         * extractedText, so they're dropped; Room re-creates them on open.
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `scanned_videos` ADD COLUMN `transcript` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `scanned_videos` ADD COLUMN `transcriptSegmentsJson` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `scanned_videos` ADD COLUMN `transcribedAt` INTEGER NOT NULL DEFAULT 0")
+                for (suffix in listOf("BEFORE_UPDATE", "BEFORE_DELETE", "AFTER_UPDATE", "AFTER_INSERT")) {
+                    db.execSQL("DROP TRIGGER IF EXISTS room_fts_content_sync_scanned_videos_fts_$suffix")
+                }
+                db.execSQL("DROP TABLE IF EXISTS `scanned_videos_fts`")
+                db.execSQL(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS `scanned_videos_fts`
+                    USING FTS4(`extractedText` TEXT NOT NULL, `transcript` TEXT NOT NULL, content=`scanned_videos`)
+                    """.trimIndent()
+                )
+                db.execSQL("INSERT INTO `scanned_videos_fts`(`scanned_videos_fts`) VALUES('rebuild')")
+            }
+        }
+
         fun getInstance(context: Context): GrepdroidDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -60,7 +84,7 @@ abstract class GrepdroidDatabase : RoomDatabase() {
                     GrepdroidDatabase::class.java,
                     "grepdroid_database"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                 INSTANCE = instance
                 instance

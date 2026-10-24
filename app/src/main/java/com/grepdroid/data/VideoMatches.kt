@@ -1,54 +1,57 @@
 package com.grepdroid.data
 
 /**
- * Locates a search query inside a video's per-frame OCR text.
+ * Locates a search query inside a video's per-frame OCR text and its speech
+ * transcript.
  *
- * Frames whose text contains the whole query win; if none do, frames containing
- * any single query word are used instead. Consecutive hits are merged into one
- * range that runs until the next sampled frame, so a caption that stays on
- * screen for 5s becomes a single 5s range rather than five 1s blips.
+ * Frames/segments containing the whole query win; if none do, those containing
+ * any single query word are used instead. Each OCR hit lasts until the next sampled
+ * frame and each speech hit lasts as long as its segment; overlapping or touching
+ * hits are merged into one range, so a caption that stays on screen for 5s becomes
+ * a single 5s range rather than five 1s blips.
  */
 object VideoMatches {
 
     fun findRanges(
         frames: List<FrameOcr>,
         query: String,
-        frameIntervalMs: Long = VideoProcessor.DEFAULT_FRAME_INTERVAL_MS
+        frameIntervalMs: Long = VideoProcessor.DEFAULT_FRAME_INTERVAL_MS,
+        speech: List<TranscriptSegment> = emptyList()
     ): List<LongRange> {
-        val hits = matchingTimestamps(frames, query)
+        val spans = frames.map { Span(it.timestampMs, it.timestampMs + frameIntervalMs, it.text) } +
+            speech.map { Span(it.startMs, it.endMs, it.text) }
+        val hits = matchingSpans(spans, query).sortedBy { it.start }
         if (hits.isEmpty()) return emptyList()
 
         val ranges = mutableListOf<LongRange>()
-        var start = hits.first()
-        var end = start + frameIntervalMs
-        for (t in hits.drop(1)) {
-            if (t <= end) {
-                end = t + frameIntervalMs
+        var start = hits.first().start
+        var end = hits.first().end
+        for (hit in hits.drop(1)) {
+            if (hit.start <= end) {
+                end = maxOf(end, hit.end)
             } else {
                 ranges.add(start until end)
-                start = t
-                end = t + frameIntervalMs
+                start = hit.start
+                end = hit.end
             }
         }
         ranges.add(start until end)
         return ranges
     }
 
-    private fun matchingTimestamps(frames: List<FrameOcr>, query: String): List<Long> {
+    private class Span(val start: Long, val end: Long, val text: String)
+
+    private fun matchingSpans(spans: List<Span>, query: String): List<Span> {
         val q = query.trim().lowercase()
         if (q.isEmpty()) return emptyList()
 
-        val exact = frames.filter { it.text.lowercase().contains(q) }
-        if (exact.isNotEmpty()) return exact.map { it.timestampMs }.distinct().sorted()
+        val exact = spans.filter { it.text.lowercase().contains(q) }
+        if (exact.isNotEmpty()) return exact
 
         val words = q.split("\\s+".toRegex()).filter { it.isNotBlank() }
-        return frames
-            .filter { frame ->
-                val text = frame.text.lowercase()
-                words.any { text.contains(it) }
-            }
-            .map { it.timestampMs }
-            .distinct()
-            .sorted()
+        return spans.filter { span ->
+            val text = span.text.lowercase()
+            words.any { text.contains(it) }
+        }
     }
 }

@@ -30,11 +30,25 @@ data class ScannedVideo(
     val extractedText: String,
     val frameTimestampsJson: String,
     val thumbnailPath: String,
-    val scannedAt: Long
-)
+    val scannedAt: Long,
+    /** Everything said in the video, one line per speech segment. Kept apart from the OCR text. */
+    @ColumnInfo(defaultValue = "")
+    val transcript: String = "",
+    /** JSON `[{"t":startMs,"e":endMs,"text":...}]`, one entry per speech segment. */
+    @ColumnInfo(defaultValue = "")
+    val transcriptSegmentsJson: String = "",
+    /** 0 = not transcribed yet, [TRANSCRIBE_FAILED] = audio couldn't be read, otherwise when it was done. */
+    @ColumnInfo(defaultValue = "0")
+    val transcribedAt: Long = 0
+) {
+    companion object {
+        const val TRANSCRIBE_FAILED = -1L
+    }
+}
 
 @Fts4(contentEntity = ScannedVideo::class)
 @Entity(tableName = "scanned_videos_fts")
 data class ScannedVideoFts(
-    val extractedText: String
+    val extractedText: String,
+    val transcript: String
 )

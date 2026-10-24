@@ -12,6 +12,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.grepdroid.data.MediaStoreScanner
+import com.grepdroid.data.SpeechModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -26,6 +27,12 @@ fun FolderPickerDialog(
     onToggleVideoBucket: (Long) -> Unit,
     onSelectAllVideos: () -> Unit,
     onToggleIndexVideos: () -> Unit,
+    transcribeSpeech: Boolean,
+    speechModelState: SpeechModel.State,
+    onToggleTranscribeSpeech: () -> Unit,
+    onDownloadSpeechModel: () -> Unit,
+    onCancelSpeechModelDownload: () -> Unit,
+    onDeleteSpeechModel: () -> Unit,
     onConfirm: () -> Unit,
     @Suppress("UNUSED_PARAMETER") onDismiss: () -> Unit
 ) {
@@ -123,6 +130,18 @@ fun FolderPickerDialog(
 
                 if (indexVideos) {
                     item {
+                        TranscribeSpeechSetting(
+                            enabled = transcribeSpeech,
+                            modelState = speechModelState,
+                            onToggle = onToggleTranscribeSpeech,
+                            onDownload = onDownloadSpeechModel,
+                            onCancelDownload = onCancelSpeechModelDownload,
+                            onDelete = onDeleteSpeechModel
+                        )
+                        HorizontalDivider()
+                    }
+
+                    item {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -167,6 +186,82 @@ fun FolderPickerDialog(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+/**
+ * "Transcribe speech" switch plus the state of the speech model it needs: a
+ * download button, download progress, or a way to delete the model again.
+ */
+@Composable
+private fun TranscribeSpeechSetting(
+    enabled: Boolean,
+    modelState: SpeechModel.State,
+    onToggle: () -> Unit,
+    onDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val totalMb = SpeechModel.TOTAL_BYTES / 1_000_000
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle() }
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Switch(checked = enabled, onCheckedChange = { onToggle() })
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Transcribe speech", fontWeight = FontWeight.Medium)
+            Text(
+                "Makes spoken words searchable · English, Dutch, German, French, Spanish and more. " +
+                    "Runs on-device after each scan; uses more threads while charging",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+
+    val status: String
+    val action: Pair<String, () -> Unit>
+    when (modelState) {
+        SpeechModel.State.Missing -> {
+            status = "Needs a one-time $totalMb MB download (Wi-Fi recommended)"
+            action = "Download" to onDownload
+        }
+        is SpeechModel.State.Downloading -> {
+            status = "Downloading ${modelState.downloadedBytes / 1_000_000} / $totalMb MB"
+            action = "Cancel" to onCancelDownload
+        }
+        SpeechModel.State.Ready -> {
+            status = "Speech model downloaded ($totalMb MB)"
+            action = "Delete" to onDelete
+        }
+        is SpeechModel.State.Failed -> {
+            status = "Download failed: ${modelState.message}"
+            action = "Retry" to onDownload
+        }
+    }
+    Column(modifier = Modifier.padding(start = 60.dp, bottom = 8.dp)) {
+        if (modelState is SpeechModel.State.Downloading) {
+            LinearProgressIndicator(
+                progress = { modelState.downloadedBytes.toFloat() / modelState.totalBytes },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp)
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                status,
+                fontSize = 12.sp,
+                color = if (modelState is SpeechModel.State.Failed) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = action.second) { Text(action.first) }
         }
     }
 }
