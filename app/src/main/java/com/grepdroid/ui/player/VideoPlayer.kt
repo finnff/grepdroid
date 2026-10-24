@@ -540,11 +540,14 @@ private fun SeekFeedbackBubble(feedback: SeekFeedback, modifier: Modifier = Modi
 /**
  * Hides the system bars while [enabled], and for landscape clips also rotates the
  * screen sideways. Everything is restored when fullscreen ends or the player leaves.
+ *
+ * The two are separate effects because the aspect ratio usually arrives after
+ * fullscreen starts; re-keying a single effect would briefly re-show the bars.
  */
 @Composable
 private fun FullscreenEffect(enabled: Boolean, lockLandscape: Boolean) {
     val context = LocalContext.current
-    DisposableEffect(enabled, lockLandscape) {
+    DisposableEffect(enabled) {
         val activity = context.findActivity()
         if (!enabled || activity == null) return@DisposableEffect onDispose { }
 
@@ -552,12 +555,17 @@ private fun FullscreenEffect(enabled: Boolean, lockLandscape: Boolean) {
         val insetsController = WindowCompat.getInsetsController(window, window.decorView)
         insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         insetsController.hide(WindowInsetsCompat.Type.systemBars())
-        val previousOrientation = activity.requestedOrientation
-        if (lockLandscape) {
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        }
         onDispose {
             insetsController.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+    DisposableEffect(enabled && lockLandscape) {
+        val activity = context.findActivity()
+        if (!(enabled && lockLandscape) || activity == null) return@DisposableEffect onDispose { }
+
+        val previousOrientation = activity.requestedOrientation
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        onDispose {
             activity.requestedOrientation = previousOrientation
         }
     }
