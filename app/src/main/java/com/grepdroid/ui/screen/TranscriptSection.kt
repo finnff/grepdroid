@@ -2,6 +2,7 @@ package com.grepdroid.ui.screen
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -17,7 +18,7 @@ import com.grepdroid.ui.player.formatPlaybackTime
 
 /**
  * What's said in the video, one line per stretch of speech. Tapping a line's
- * timestamp seeks the player there; the text itself can be long-pressed to select.
+ * timestamp seeks the player there; long-press the text to select across lines.
  * Shows nothing until the video has been transcribed.
  */
 @Composable
@@ -47,24 +48,31 @@ internal fun TranscriptSection(
         )
         return
     }
-    Column(modifier = Modifier.padding(vertical = 4.dp)) {
-        for (segment in segments) {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = formatPlaybackTime(segment.startMs),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .clickable { onSeek(segment.startMs) }
-                        .padding(start = 16.dp, end = 12.dp, top = 4.dp, bottom = 4.dp)
-                        .widthIn(min = 40.dp)
-                )
-                SelectionContainer(modifier = Modifier.weight(1f)) {
+    // One selection area for the whole transcript so several lines can be selected
+    // at once; the timestamps are excluded, so copying yields just the spoken text,
+    // one line per segment.
+    SelectionContainer {
+        Column(modifier = Modifier.padding(vertical = 4.dp)) {
+            for (segment in segments) {
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    DisableSelection {
+                        Text(
+                            text = formatPlaybackTime(segment.startMs),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .clickable { onSeek(segment.startMs) }
+                                .padding(start = 16.dp, end = 12.dp, top = 4.dp, bottom = 4.dp)
+                                .widthIn(min = 40.dp)
+                        )
+                    }
                     Text(
                         text = segment.text,
                         fontSize = 14.sp,
-                        modifier = Modifier.padding(end = 16.dp, top = 4.dp, bottom = 4.dp)
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 16.dp, top = 4.dp, bottom = 4.dp)
                     )
                 }
             }

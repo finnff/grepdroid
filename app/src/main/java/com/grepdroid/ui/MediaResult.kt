@@ -33,5 +33,6 @@ sealed class MediaResult {
         override val extractedText: String get() = video.extractedText
         val durationMs: Long get() = video.durationMs
         val thumbnailPath: String get() = video.thumbnailPath
+        val hasSpeech: Boolean get() = video.transcript.isNotBlank()
     }
 }

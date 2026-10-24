@@ -33,6 +33,7 @@ import com.grepdroid.ui.MainViewModel
 import com.grepdroid.ui.MediaFilter
 import com.grepdroid.ui.MediaResult
 import com.grepdroid.ui.SortOrder
+import com.grepdroid.ui.player.formatPlaybackTime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -326,6 +327,12 @@ private fun MediaCard(
                 if (result is MediaResult.Video) {
                     Box(modifier = Modifier.fillMaxSize().weight(1f)) {
                         VideoThumbnail(video = result, onClick = onClick)
+                        DurationBadge(
+                            durationMs = result.durationMs,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(4.dp)
+                        )
                     }
                 } else {
                     AsyncImage(
@@ -346,52 +353,71 @@ private fun MediaCard(
                 )
             }
 
-            if (result is MediaResult.Video) {
-                Surface(
-                    color = Color.Black.copy(alpha = 0.6f),
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(4.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+            ) {
+                if (result is MediaResult.Video && result.hasSpeech) {
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.6f),
+                        shape = MaterialTheme.shapes.small
                     ) {
                         Icon(
-                            Icons.Default.PlayArrow,
-                            contentDescription = null,
+                            Icons.Default.RecordVoiceOver,
+                            contentDescription = "Has speech",
                             tint = Color.White,
-                            modifier = Modifier.size(12.dp)
+                            modifier = Modifier
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                .size(12.dp)
                         )
+                    }
+                }
+                if (result.matchPercent != null) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = MaterialTheme.shapes.small
+                    ) {
                         Text(
-                            text = formatDuration(result.durationMs),
+                            text = "${result.matchPercent}%",
                             fontSize = 10.sp,
-                            color = Color.White,
-                            modifier = Modifier.padding(start = 2.dp)
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
             }
+        }
+    }
+}
 
-            if (result.matchPercent != null) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(4.dp)
-                ) {
-                    Text(
-                        text = "${result.matchPercent}%",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
+@Composable
+private fun DurationBadge(durationMs: Long, modifier: Modifier = Modifier) {
+    Surface(
+        color = Color.Black.copy(alpha = 0.6f),
+        shape = MaterialTheme.shapes.small,
+        modifier = modifier
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+        ) {
+            Icon(
+                Icons.Default.PlayArrow,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(12.dp)
+            )
+            Text(
+                text = formatPlaybackTime(durationMs),
+                fontSize = 10.sp,
+                color = Color.White,
+                modifier = Modifier.padding(start = 2.dp)
+            )
         }
     }
 }
@@ -505,13 +531,6 @@ private fun VideoThumbnail(
             )
         }
     }
-}
-
-private fun formatDuration(ms: Long): String {
-    val totalSec = ms / 1000
-    val m = totalSec / 60
-    val s = totalSec % 60
-    return "%d:%02d".format(m, s)
 }
 
 private fun formatEta(seconds: Long): String {
