@@ -5,7 +5,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,6 +41,8 @@ class SpeechModel(context: Context) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var downloadJob: Job? = null
+    // Closed from cancelDownload()/delete() so a blocked read stops right away.
+    @Volatile private var connection: HttpURLConnection? = null
 
     private val _state = MutableStateFlow(if (isDownloaded()) State.Ready else State.Missing)
     val state: StateFlow<State> = _state.asStateFlow()
@@ -50,8 +54,12 @@ class SpeechModel(context: Context) {
     private fun isDownloaded() = FILES.all { file(it.name).length() == it.size }
 
     fun download() {
-        if (downloadJob?.isActive == true || isReady) return
+        if (isReady || _state.value is State.Downloading) return
+        val prior = downloadJob
         downloadJob = scope.launch {
+            // A just-cancelled download may still be writing its .part file, and a
+            // pending delete is superseded by downloading again.
+            prior?.cancelAndJoin()
             try {
                 dir.mkdirs()
                 var done = FILES.filter { file(it.name).length() == it.size }.sumOf { it.size }
@@ -66,8 +74,13 @@ class SpeechModel(context: Context) {
                 _state.value = State.Missing
                 throw e
             } catch (e: Exception) {
-                e.printStackTrace()
-                _state.value = State.Failed(e.message ?: e.javaClass.simpleName)
+                if (!isActive) {
+                    // The read failed because cancelDownload()/delete() closed the connection.
+                    _state.value = State.Missing
+                } else {
+                    e.printStackTrace()
+                    _state.value = State.Failed(e.message ?: e.javaClass.simpleName)
+                }
             }
         }
     }
@@ -75,12 +88,27 @@ class SpeechModel(context: Context) {
     /** Keeps the partial download so a later [download] resumes where it stopped. */
     fun cancelDownload() {
         downloadJob?.cancel()
+        closeConnection()
     }
 
     fun delete() {
-        downloadJob?.cancel()
-        dir.deleteRecursively()
+        val prior = downloadJob
+        prior?.cancel()
+        closeConnection()
         _state.value = State.Missing
+        // Wait for a running download to stop before removing the files it writes to.
+        downloadJob = scope.launch {
+            prior?.cancelAndJoin()
+            dir.deleteRecursively()
+            // A download that finished just as delete() ran may have set Ready.
+            _state.value = State.Missing
+        }
+    }
+
+    /** Closing the socket can touch the network, which isn't allowed on the main thread. */
+    private fun closeConnection() {
+        val conn = connection ?: return
+        scope.launch { conn.disconnect() }
     }
 
     /**
@@ -95,6 +123,7 @@ class SpeechModel(context: Context) {
             part.inputStream().use { input ->
                 val buf = ByteArray(1 shl 16)
                 while (true) {
+                    coroutineContext.ensureActive()
                     val n = input.read(buf)
                     if (n < 0) break
                     digest.update(buf, 0, n)
@@ -105,7 +134,10 @@ class SpeechModel(context: Context) {
 
         if (have < f.size) {
             val conn = URL(f.url).openConnection() as HttpURLConnection
+            connection = conn
             try {
+                // A cancel that came before the connection was stored couldn't close it.
+                coroutineContext.ensureActive()
                 conn.connectTimeout = 30_000
                 conn.readTimeout = 60_000
                 if (have > 0) conn.setRequestProperty("Range", "bytes=$have-")
@@ -136,6 +168,7 @@ class SpeechModel(context: Context) {
                     }
                 }
             } finally {
+                connection = null
                 conn.disconnect()
             }
         }

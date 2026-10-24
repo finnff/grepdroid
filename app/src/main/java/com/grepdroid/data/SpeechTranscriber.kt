@@ -59,6 +59,28 @@ class SpeechTranscriber(
     val threads: Int
 ) : AutoCloseable {
 
+    // One VAD for the whole batch, reset per video. It is loaded from disk here, so
+    // deleting the model mid-batch can't break a later video. Created before the
+    // recognizer so a failure here doesn't strand 1.3 GB of native memory.
+    private val vad = Vad(
+        assetManager = null,
+        config = VadModelConfig(
+            sileroVadModelConfig = SileroVadModelConfig(
+                model = model.file(SpeechModel.VAD).absolutePath,
+                threshold = 0.5f,
+                minSilenceDuration = 0.3f,
+                minSpeechDuration = 0.25f,
+                windowSize = VAD_WINDOW,
+                // Long monologues are cut into pieces of at most this length, which
+                // also bounds how much audio is held in memory at once.
+                maxSpeechDuration = 20f
+            ),
+            sampleRate = AudioDecoder.SAMPLE_RATE,
+            numThreads = 1,
+            provider = "cpu"
+        )
+    )
+
     private val recognizer = OfflineRecognizer(
         assetManager = null,
         config = OfflineRecognizerConfig(
@@ -81,65 +103,50 @@ class SpeechTranscriber(
     /** Returns null when the video has no audio track. Throws if the audio can't be decoded. */
     suspend fun transcribe(contentUri: String): Transcript? {
         val ctx = coroutineContext
-        val vad = Vad(
-            assetManager = null,
-            config = VadModelConfig(
-                sileroVadModelConfig = SileroVadModelConfig(
-                    model = model.file(SpeechModel.VAD).absolutePath,
-                    threshold = 0.5f,
-                    minSilenceDuration = 0.3f,
-                    minSpeechDuration = 0.25f,
-                    windowSize = VAD_WINDOW,
-                    // Long monologues are cut into pieces of at most this length, which
-                    // also bounds how much audio is held in memory at once.
-                    maxSpeechDuration = 20f
-                ),
-                sampleRate = AudioDecoder.SAMPLE_RATE,
-                numThreads = 1,
-                provider = "cpu"
-            )
-        )
-        try {
-            val segments = mutableListOf<TranscriptSegment>()
-            fun drain() {
-                while (!vad.empty()) {
-                    val speech = vad.front()
-                    vad.pop()
-                    ctx.ensureActive()
-                    val text = recognize(speech.samples)
-                    if (text.isNotEmpty()) {
-                        val startMs = speech.start * 1000L / AudioDecoder.SAMPLE_RATE
-                        val endMs = startMs + speech.samples.size * 1000L / AudioDecoder.SAMPLE_RATE
-                        segments.add(TranscriptSegment(startMs, endMs, text))
-                    }
-                }
-            }
-
-            // The VAD wants fixed-size windows; carry the remainder over between chunks.
-            val window = FloatArray(VAD_WINDOW)
-            var filled = 0
-            val hasAudio = AudioDecoder.decode(context, contentUri) { chunk ->
+        // Also clears whatever a cancelled previous video left behind.
+        vad.reset()
+        val segments = mutableListOf<TranscriptSegment>()
+        fun drain() {
+            while (!vad.empty()) {
+                val speech = vad.front()
+                vad.pop()
                 ctx.ensureActive()
-                var i = 0
-                while (i < chunk.size) {
-                    val n = minOf(VAD_WINDOW - filled, chunk.size - i)
-                    System.arraycopy(chunk, i, window, filled, n)
-                    filled += n
-                    i += n
-                    if (filled == VAD_WINDOW) {
-                        vad.acceptWaveform(window)
-                        filled = 0
-                        drain()
-                    }
+                val text = recognize(speech.samples)
+                if (text.isNotEmpty()) {
+                    val startMs = speech.start * 1000L / AudioDecoder.SAMPLE_RATE
+                    val endMs = startMs + speech.samples.size * 1000L / AudioDecoder.SAMPLE_RATE
+                    segments.add(TranscriptSegment(startMs, endMs, text))
                 }
             }
-            if (!hasAudio) return null
-            vad.flush()
-            drain()
-            return Transcript(segments)
-        } finally {
-            vad.release()
         }
+
+        // The VAD wants fixed-size windows; carry the remainder over between chunks.
+        val window = FloatArray(VAD_WINDOW)
+        var filled = 0
+        val hasAudio = AudioDecoder.decode(context, contentUri) { chunk ->
+            ctx.ensureActive()
+            var i = 0
+            while (i < chunk.size) {
+                val n = minOf(VAD_WINDOW - filled, chunk.size - i)
+                System.arraycopy(chunk, i, window, filled, n)
+                filled += n
+                i += n
+                if (filled == VAD_WINDOW) {
+                    vad.acceptWaveform(window)
+                    filled = 0
+                    drain()
+                }
+            }
+        }
+        if (!hasAudio) return null
+        if (filled > 0) {
+            // Pad the last partial window with silence so the final word isn't cut off.
+            window.fill(0f, filled)
+            vad.acceptWaveform(window)
+        }
+        vad.flush()
+        drain()
+        return Transcript(segments)
     }
 
     private fun recognize(samples: FloatArray): String {
@@ -154,6 +161,7 @@ class SpeechTranscriber(
     }
 
     override fun close() {
+        vad.release()
         recognizer.release()
     }
 

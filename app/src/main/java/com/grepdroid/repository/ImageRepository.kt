@@ -315,19 +315,32 @@ class ImageRepository(
 
         val label = "Transcribing speech"
         val startTime = System.currentTimeMillis()
+        var pausedMs = 0L
         _scanProgress.value = ScanProgress(0, todo.size, label = label)
         var transcriber: SpeechTranscriber? = null
         try {
             for ((index, video) in todo.withIndex()) {
-                while (engine.isOverheating()) {
+                // Deleted mid-batch: stop, leaving the rest untouched for after a re-download.
+                if (!engine.model.isReady) return
+                if (engine.isOverheating()) {
+                    val pauseStart = System.currentTimeMillis()
                     _scanProgress.value = _scanProgress.value.copy(label = "Phone is hot, pausing transcription")
-                    delay(15_000)
+                    while (engine.isOverheating()) delay(15_000)
+                    pausedMs += System.currentTimeMillis() - pauseStart
+                    _scanProgress.value = _scanProgress.value.copy(label = label)
                 }
                 val threads = engine.preferredThreads()
                 val current = transcriber?.takeIf { it.threads == threads } ?: run {
                     transcriber?.close()
                     transcriber = null
-                    engine.open(threads).also { transcriber = it }
+                    try {
+                        engine.open(threads).also { transcriber = it }
+                    } catch (e: Throwable) {
+                        // E.g. not enough memory for the model. Try again next scan
+                        // rather than crash the app.
+                        e.printStackTrace()
+                        return
+                    }
                 }
 
                 val now = System.currentTimeMillis()
@@ -348,8 +361,8 @@ class ImageRepository(
                 }
 
                 val count = index + 1
-                val elapsedMs = System.currentTimeMillis() - startTime
-                val eta = if (count >= 2) (elapsedMs.toDouble() / count * (todo.size - count) / 1000).toLong() else null
+                val workedMs = System.currentTimeMillis() - startTime - pausedMs
+                val eta = if (count >= 2) (workedMs.toDouble() / count * (todo.size - count) / 1000).toLong() else null
                 _scanProgress.value = ScanProgress(count, todo.size, eta, label)
             }
         } finally {
